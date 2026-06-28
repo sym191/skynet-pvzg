@@ -64,7 +64,14 @@ add_original_skynet_target(
     LUACLIB_DIR "${SKPVZG_ORIGINAL_LUACLIB_DIR}"
 )
 
+add_subdirectory(src/runtime)
+
 add_executable(skynet_refactor src/skynet_refactor/main.cc)
+
+target_link_libraries(skynet_refactor
+    PRIVATE
+    skynet::runtime)
+
 target_link_libraries(skynet_refactor
     PRIVATE
         asio::asio
