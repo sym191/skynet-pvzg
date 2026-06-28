@@ -1,0 +1,5 @@
+foreach(output_path IN ITEMS "${ORIGINAL_SKYNET}" "${ORIGINAL_CSERVICE}" "${ORIGINAL_LUACLIB}")
+    if(NOT EXISTS "${output_path}")
+        message(FATAL_ERROR "Expected original skynet output does not exist: ${output_path}")
+    endif()
+endforeach()

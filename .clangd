@@ -1,0 +1,6 @@
+CompileFlags:
+  CompilationDatabase: build/linux-debug
+  Remove:
+    - -fmodules-ts
+    - -fmodule-mapper=*
+    - -fdeps-format=*

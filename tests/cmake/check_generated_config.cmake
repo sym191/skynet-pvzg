@@ -1,0 +1,17 @@
+foreach(config_path IN ITEMS "${ORIGINAL_CONFIG}" "${REFACTOR_CONFIG}")
+    if(NOT EXISTS "${config_path}")
+        message(FATAL_ERROR "Expected generated config does not exist: ${config_path}")
+    endif()
+
+    file(READ "${config_path}" config_content)
+    string(FIND "${config_content}" "${SHARED_LUA_ROOT}" shared_lua_index)
+    if(shared_lua_index EQUAL -1)
+        message(FATAL_ERROR "Generated config does not reference shared Lua root: ${config_path}")
+    endif()
+endforeach()
+
+file(READ "${ORIGINAL_CONFIG}" original_config_content)
+string(FIND "${original_config_content}" "lualib/loader.lua" original_loader_index)
+if(original_loader_index EQUAL -1)
+    message(FATAL_ERROR "Original skynet config must keep using skynet lualib/loader.lua.")
+endif()

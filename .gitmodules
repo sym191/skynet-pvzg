@@ -1,0 +1,4 @@
+[submodule "third_party/skynet"]
+	path = third_party/skynet
+	url = https://github.com/cloudwu/skynet.git
+	ignore = dirty

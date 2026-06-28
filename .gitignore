@@ -1,0 +1,14 @@
+build/
+cmake-build-*/
+.cache/
+
+# Runtime output
+logs/
+*.log
+*.pid
+*.tmp
+
+# Editor and local files
+.DS_Store
+.idea/
+.vscode/

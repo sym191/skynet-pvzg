@@ -1,0 +1,90 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "refactor-debug",
+      "configurePreset": "linux-debug",
+      "targets": [
+        "skynet_refactor"
+      ]
+    },
+    {
+      "name": "original-debug",
+      "configurePreset": "linux-debug",
+      "targets": [
+        "skynet_original"
+      ]
+    },
+    {
+      "name": "all-debug",
+      "configurePreset": "linux-debug",
+      "targets": [
+        "skynet_all"
+      ]
+    },
+    {
+      "name": "refactor-release",
+      "configurePreset": "linux-release",
+      "targets": [
+        "skynet_refactor"
+      ]
+    },
+    {
+      "name": "original-release",
+      "configurePreset": "linux-release",
+      "targets": [
+        "skynet_original"
+      ]
+    },
+    {
+      "name": "all-release",
+      "configurePreset": "linux-release",
+      "targets": [
+        "skynet_all"
+      ]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
