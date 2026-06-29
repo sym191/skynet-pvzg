@@ -64,7 +64,9 @@ public:
 
     [[nodiscard]] SocketId id() const noexcept;
     [[nodiscard]] ServiceId owner_snapshot() const noexcept;
-    [[nodiscard]] virtual SocketKind kind() const noexcept = 0;
+    [[nodiscard]] virtual SocketKind kind() const noexcept {
+        return SocketKind::tcp_connection;
+    }
 
     virtual void request_start(ServiceId new_owner) = 0;
     virtual void request_pause() = 0;
