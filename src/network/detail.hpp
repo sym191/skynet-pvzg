@@ -15,7 +15,14 @@
 namespace skynet::network::detail {
 
 using Tcp = asio::ip::tcp;
+using Udp = asio::ip::udp;
 using Strand = asio::strand<asio::io_context::executor_type>;
+
+enum class SocketKind : std::uint8_t {
+    tcp_connection,
+    tcp_listener,
+    udp,
+};
 
 class SocketBase;
 
@@ -48,6 +55,7 @@ struct Core final {
 };
 
 [[nodiscard]] std::string endpoint_text(const Tcp::endpoint& endpoint);
+[[nodiscard]] std::string endpoint_text(const Udp::endpoint& endpoint);
 
 class SocketBase : public std::enable_shared_from_this<SocketBase> {
 public:
@@ -56,12 +64,15 @@ public:
 
     [[nodiscard]] SocketId id() const noexcept;
     [[nodiscard]] ServiceId owner_snapshot() const noexcept;
+    [[nodiscard]] virtual SocketKind kind() const noexcept = 0;
 
     virtual void request_start(ServiceId new_owner) = 0;
     virtual void request_pause() = 0;
     virtual void request_send(Buffer buffer, SendPriority priority) = 0;
     virtual void request_close(bool abort) = 0;
     virtual void request_nodelay(bool enabled) = 0;
+    virtual void request_udp_connect(Endpoint endpoint);
+    virtual void request_udp_send(Buffer buffer, Endpoint endpoint);
 
 protected:
     void change_owner(ServiceId owner) noexcept;
@@ -81,6 +92,11 @@ protected:
 [[nodiscard]] std::expected<void, Error> validate_owner(
     const std::shared_ptr<SocketBase>& socket,
     ServiceId owner
+);
+
+[[nodiscard]] std::expected<void, Error> validate_kind(
+    const std::shared_ptr<SocketBase>& socket,
+    SocketKind kind
 );
 
 [[nodiscard]] std::shared_ptr<SocketBase> make_outbound_connection(
@@ -113,6 +129,18 @@ void open_listener(
     std::string host,
     std::uint16_t port,
     int backlog
+);
+
+[[nodiscard]] std::shared_ptr<SocketBase> make_udp_socket(
+    Core& core,
+    SocketId id,
+    ServiceId owner
+);
+
+void open_udp_socket(
+    const std::shared_ptr<SocketBase>& socket,
+    std::string host,
+    std::uint16_t port
 );
 
 }  // namespace skynet::network::detail
