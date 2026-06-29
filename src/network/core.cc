@@ -94,7 +94,10 @@ bool Core::publish(Event&& event) noexcept {
     return sink.publish(std::move(event));
 }
 
-std::string endpoint_text(const Tcp::endpoint& endpoint) {
+namespace {
+
+template <class EndpointType>
+std::string format_endpoint(const EndpointType& endpoint) {
     asio::error_code error;
     const auto address = endpoint.address().to_string(error);
     if (error) {
@@ -104,6 +107,16 @@ std::string endpoint_text(const Tcp::endpoint& endpoint) {
         return "[" + address + "]:" + std::to_string(endpoint.port());
     }
     return address + ":" + std::to_string(endpoint.port());
+}
+
+}  // namespace
+
+std::string endpoint_text(const Tcp::endpoint& endpoint) {
+    return format_endpoint(endpoint);
+}
+
+std::string endpoint_text(const Udp::endpoint& endpoint) {
+    return format_endpoint(endpoint);
 }
 
 SocketBase::SocketBase(Core& core, SocketId id, ServiceId owner)
@@ -120,6 +133,14 @@ SocketId SocketBase::id() const noexcept {
 
 ServiceId SocketBase::owner_snapshot() const noexcept {
     return owner_snapshot_.load(std::memory_order_acquire);
+}
+
+void SocketBase::request_udp_connect(Endpoint) {
+    publish_error("operation requires a UDP socket");
+}
+
+void SocketBase::request_udp_send(Buffer, Endpoint) {
+    publish_error("operation requires a UDP socket");
 }
 
 void SocketBase::change_owner(ServiceId owner) noexcept {
@@ -179,6 +200,25 @@ std::expected<void, Error> validate_owner(
         return std::unexpected(Error{
             ErrorCode::wrong_owner,
             "socket is owned by another service",
+        });
+    }
+    return {};
+}
+
+std::expected<void, Error> validate_kind(
+    const std::shared_ptr<SocketBase>& socket,
+    SocketKind kind
+) {
+    if (!socket) {
+        return std::unexpected(Error{
+            ErrorCode::invalid_socket,
+            "socket id is not active",
+        });
+    }
+    if (socket->kind() != kind) {
+        return std::unexpected(Error{
+            ErrorCode::wrong_socket_kind,
+            "socket has the wrong kind for this operation",
         });
     }
     return {};
