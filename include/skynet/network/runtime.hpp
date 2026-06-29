@@ -21,6 +21,7 @@ enum class EventType : std::uint8_t {
     open,
     accept,
     error,
+    udp,
     warning,
 };
 
@@ -45,6 +46,7 @@ enum class ErrorCode : std::uint8_t {
     invalid_argument,
     invalid_socket,
     wrong_owner,
+    wrong_socket_kind,
     socket_limit_reached,
     runtime_not_running,
     runtime_stopping,
@@ -60,10 +62,16 @@ enum class SendPriority : std::uint8_t {
     low,
 };
 
+struct Endpoint {
+    std::string host;
+    std::uint16_t port{};
+};
+
 struct Config {
     std::size_t thread_count{1};
     std::size_t max_sockets{65'536};
     std::size_t read_buffer_size{16 * 1024};
+    std::size_t udp_buffer_size{64 * 1024};
     std::size_t write_warning_bytes{1024 * 1024};
     std::size_t write_hard_limit{64 * 1024 * 1024};
     std::uint32_t connect_timeout_ms{10'000};
@@ -98,6 +106,25 @@ public:
         ServiceId owner,
         std::string host,
         std::uint16_t port
+    );
+
+    [[nodiscard]] std::expected<SocketId, Error> udp_bind(
+        ServiceId owner,
+        std::string host,
+        std::uint16_t port
+    );
+
+    [[nodiscard]] std::expected<void, Error> udp_connect(
+        ServiceId owner,
+        SocketId socket,
+        Endpoint endpoint
+    );
+
+    [[nodiscard]] std::expected<void, Error> udp_send(
+        ServiceId owner,
+        SocketId socket,
+        Buffer buffer,
+        Endpoint endpoint = {}
     );
 
     [[nodiscard]] std::expected<void, Error> start_socket(
