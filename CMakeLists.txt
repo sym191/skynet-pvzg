@@ -64,6 +64,8 @@ add_original_skynet_target(
     LUACLIB_DIR "${SKPVZG_ORIGINAL_LUACLIB_DIR}"
 )
 
+add_subdirectory(src/network)
+
 add_executable(skynet_refactor src/skynet_refactor/main.cc)
 target_link_libraries(skynet_refactor
     PRIVATE
@@ -107,4 +109,4 @@ add_test(
 )
 
 add_custom_target(skpvzg_tests DEPENDS skpvzg_dependency_smoke)
-add_custom_target(skynet_all DEPENDS skynet_refactor skynet_original skpvzg_tests)
+add_custom_target(skynet_all DEPENDS skynet_refactor skynet_original skynet_network skpvzg_tests)

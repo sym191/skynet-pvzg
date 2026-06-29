@@ -98,12 +98,9 @@ namespace {
 
 template <class EndpointType>
 std::string format_endpoint(const EndpointType& endpoint) {
-    asio::error_code error;
-    const auto address = endpoint.address().to_string(error);
-    if (error) {
-        return {};
-    }
-    if (endpoint.address().is_v6()) {
+    const auto endpoint_address = endpoint.address();
+    const auto address = endpoint_address.to_string();
+    if (endpoint_address.is_v6()) {
         return "[" + address + "]:" + std::to_string(endpoint.port());
     }
     return address + ":" + std::to_string(endpoint.port());

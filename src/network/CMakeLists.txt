@@ -7,10 +7,11 @@ add_library(skynet_network STATIC
 target_include_directories(skynet_network
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/../../include
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-find_package(asio REQUIRED)
-
+# asio is provided by ProjectDependencies (asio::asio)
 if(TARGET asio::asio)
     target_link_libraries(skynet_network PUBLIC asio::asio)
 endif()
