@@ -2,6 +2,11 @@
 add_library(skynet_runtime
     STATIC
     MessageQueue.cc
+    Environment.cc
+    ServiceRegistry.cc
+    HandleManager.cc
+    Service.cc
+    ServiceRegistry.cc
 )
 
 target_include_directories(

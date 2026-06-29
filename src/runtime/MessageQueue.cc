@@ -1,5 +1,6 @@
 #include "MessageQueue.hpp"
 #include "Message.hpp"
+
 #include <mutex>
 #include <optional>
 #include <vector>
