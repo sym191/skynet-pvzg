@@ -71,8 +71,8 @@ std::vector<std::shared_ptr<SocketBase>> SocketDirectory::snapshot() const {
     std::vector<std::shared_ptr<SocketBase>> result;
     std::scoped_lock lock(mutex_);
     result.reserve(sockets_.size());
-    for (const auto& [id, socket] : sockets_) {
-        static_cast<void>(id);
+    for (const auto& entry : sockets_) {
+        const auto& socket = entry.second;
         if (socket) {
             result.push_back(socket);
         }
