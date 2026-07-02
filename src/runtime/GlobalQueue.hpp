@@ -4,6 +4,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <stop_token>
 
 namespace skynet::runtime {
 

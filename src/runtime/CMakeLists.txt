@@ -5,8 +5,9 @@ add_library(skynet_runtime
     Environment.cc
     ServiceRegistry.cc
     HandleManager.cc
+    LogService.cc
+    runtime_error.cc
     Service.cc
-    ServiceRegistry.cc
 )
 
 target_include_directories(
@@ -17,6 +18,12 @@ target_include_directories(
 
 target_compile_features(skynet_runtime
     PUBLIC
-    cxx_std_23)
+        cxx_std_23
+)
+
+target_link_libraries(skynet_runtime
+    PUBLIC
+        spdlog::spdlog
+)
 
 add_library(skynet::runtime ALIAS skynet_runtime)

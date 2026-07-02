@@ -1,5 +1,7 @@
 #include "ServiceRegistry.hpp"
+
 #include <mutex>
+#include <utility>
 
 namespace skynet::runtime {
 
@@ -12,10 +14,10 @@ bool ServiceRegistry::register_factory(std::string name, ServiceFactory factory)
 ServicePtr ServiceRegistry::create(std::string_view name) const {
     std::lock_guard<std::mutex> guard(mutex_);
     auto it = factories_.find(std::string(name));
-    if(it == factories_.end()){
+    if (it == factories_.end()) {
         return nullptr;
     }
-    return it -> second();
+    return it->second();
 }
 
 bool ServiceRegistry::contains(std::string_view name) const {
@@ -23,4 +25,4 @@ bool ServiceRegistry::contains(std::string_view name) const {
     return factories_.contains(std::string(name));
 }
 
-}
+}  // namespace skynet::runtime
