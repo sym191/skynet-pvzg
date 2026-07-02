@@ -20,12 +20,6 @@ public:
             return "failed to open runtime config";
         case RuntimeErrc::invalid_config_string:
             return "invalid runtime config string";
-        case RuntimeErrc::invalid_config_boolean:
-            return "invalid runtime config boolean";
-        case RuntimeErrc::invalid_log_level:
-            return "invalid log level";
-        case RuntimeErrc::invalid_log_sink:
-            return "invalid log sink configuration";
         case RuntimeErrc::logger_creation_failed:
             return "failed to create runtime logger";
         }

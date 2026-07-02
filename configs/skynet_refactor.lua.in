@@ -1,7 +1,6 @@
 root = "@PROJECT_SOURCE_DIR@/"
 lua_root = "@SKPVZG_SHARED_LUA_ROOT@"
 thread = 8
-logger = "stdout"
 logfile = "@SKPVZG_REFACTOR_OUTPUT_DIR@/skynet.log"
 start = "main"
 

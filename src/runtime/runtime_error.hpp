@@ -9,9 +9,6 @@ enum class RuntimeErrc {
     success = 0,
     config_open_failed,
     invalid_config_string,
-    invalid_config_boolean,
-    invalid_log_level,
-    invalid_log_sink,
     logger_creation_failed,
 };
 
