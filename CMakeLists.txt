@@ -65,12 +65,14 @@ add_original_skynet_target(
 )
 
 add_subdirectory(src/network)
+add_subdirectory(src/runtime)
 
 add_executable(skynet_refactor src/skynet_refactor/main.cc)
 target_link_libraries(skynet_refactor
     PRIVATE
         asio::asio
         spdlog::spdlog
+        skynet::runtime
 )
 set_target_properties(skynet_refactor PROPERTIES
     OUTPUT_NAME skynet
