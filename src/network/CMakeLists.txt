@@ -1,4 +1,5 @@
 add_library(skynet_network STATIC
+    runtime.cc
     core.cc
     tcp_connection.cc
     tcp_listener.cc
