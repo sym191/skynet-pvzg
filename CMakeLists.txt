@@ -90,6 +90,14 @@ target_link_libraries(skpvzg_dependency_smoke
 
 add_test(NAME dependencies.smoke COMMAND skpvzg_dependency_smoke)
 
+add_executable(skpvzg_runtime_log_test tests/runtime_log_test.cc)
+target_link_libraries(skpvzg_runtime_log_test
+    PRIVATE
+        skynet::runtime
+)
+
+add_test(NAME runtime.log COMMAND skpvzg_runtime_log_test)
+
 add_test(
     NAME configs.generated
     COMMAND
@@ -110,5 +118,5 @@ add_test(
         -P "${PROJECT_SOURCE_DIR}/tests/cmake/check_original_outputs.cmake"
 )
 
-add_custom_target(skpvzg_tests DEPENDS skpvzg_dependency_smoke)
+add_custom_target(skpvzg_tests DEPENDS skpvzg_dependency_smoke skpvzg_runtime_log_test)
 add_custom_target(skynet_all DEPENDS skynet_refactor skynet_original skynet_network skpvzg_tests)
