@@ -8,6 +8,7 @@ add_library(skynet_runtime
     LogService.cc
     runtime_error.cc
     Service.cc
+    Context.cc
 )
 
 target_include_directories(

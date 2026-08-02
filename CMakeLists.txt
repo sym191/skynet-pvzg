@@ -67,6 +67,7 @@ add_original_skynet_target(
 add_subdirectory(src/network)
 add_subdirectory(src/lua)
 add_subdirectory(src/runtime)
+add_subdirectory(src/service)
 
 add_executable(skynet_refactor src/skynet_refactor/main.cc)
 target_link_libraries(skynet_refactor
@@ -107,6 +108,19 @@ target_link_libraries(skpvzg_lua_state_test
 
 add_test(NAME lua.state COMMAND skpvzg_lua_state_test)
 
+add_executable(skpvzg_lua_service_test tests/lua_service_test.cc)
+target_compile_definitions(skpvzg_lua_service_test
+    PRIVATE
+        SKPVZG_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+target_link_libraries(skpvzg_lua_service_test
+    PRIVATE
+        skynet::lua
+        skynet::lua_service
+)
+
+add_test(NAME lua.service COMMAND skpvzg_lua_service_test)
+
 add_test(
     NAME configs.generated
     COMMAND
@@ -133,6 +147,7 @@ add_custom_target(
         skpvzg_dependency_smoke
         skpvzg_runtime_log_test
         skpvzg_lua_state_test
+        skpvzg_lua_service_test
 )
 add_custom_target(
     skynet_all
@@ -141,5 +156,6 @@ add_custom_target(
         skynet_original
         skynet_network
         skynet_lua
+        skynet_lua_service
         skpvzg_tests
 )

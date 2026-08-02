@@ -27,3 +27,4 @@ ctest --preset linux-debug
 ## 专题文档
 
 - [Network 设计架构](network-architecture.md)
+- [Lua Service 兼容设计](lua-service.md)
