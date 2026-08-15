@@ -1,30 +1,18 @@
 #include "LuaService.hpp"
 
 #include "Context.hpp"
+#include "LuaRuntime.hpp"
 #include "ServiceRegistry.hpp"
-#include "skynet_compat.hpp"
-#include "skynet_snlua_bridge.h"
 
 #include <cstddef>
 #include <memory>
-#include <string>
 #include <utility>
 
 namespace skynet::service {
 
 struct LuaService::Impl {
-    Impl()
-            : service(skynet_snlua_create()) {}
-
-    ~Impl() {
-        skynet_snlua_release(service);
-        detail::destroy_compat_context(compat_context);
-    }
-
-    snlua* service = nullptr;
-    skynet_context* compat_context = nullptr;
+    detail::LuaRuntime lua_runtime;
     runtime::Context* runtime_context = nullptr;
-    bool initialized = false;
 };
 
 LuaService::LuaService()
@@ -33,70 +21,47 @@ LuaService::LuaService()
 LuaService::~LuaService() = default;
 
 bool LuaService::init(runtime::Context& context, std::string_view args) {
-    if (impl_->initialized || impl_->service == nullptr) {
-        return false;
-    }
-
-    impl_->compat_context = detail::create_compat_context(context);
-    if (impl_->compat_context == nullptr) {
+    if (impl_->runtime_context != nullptr) {
         return false;
     }
     impl_->runtime_context = &context;
-
-    const std::string arguments(args);
-    detail::CurrentContextGuard current_context_guard(impl_->compat_context);
-    if (skynet_snlua_init_direct(
-            impl_->service,
-            impl_->compat_context,
-            arguments.c_str(),
-            arguments.size()) != 0) {
-        (void)context.command("EXIT");
+    if (!impl_->lua_runtime.Init(context, args)) {
         return false;
     }
-
-    impl_->initialized = true;
     return true;
 }
 
 void LuaService::dispatch(runtime::Context& context, runtime::Message message) {
-    if (!impl_->initialized || impl_->runtime_context != &context) {
+    if (!impl_->lua_runtime.initialized() || impl_->runtime_context != &context) {
         context.log("LuaService received a message before successful initialization");
         return;
     }
-
-    const bool dispatched = detail::dispatch_compat_message(
-        impl_->compat_context,
-        static_cast<int>(message.type),
-        message.session,
-        message.source,
-        message.data.empty() ? nullptr : message.data.data(),
-        message.data.size());
-    if (!dispatched) {
+    if (!impl_->lua_runtime.Dispatch(std::move(message))) {
         context.log("LuaService has no registered message callback");
     }
 }
 
 void LuaService::signal(runtime::Context& context, int signal_value) {
-    if (!impl_->initialized || impl_->runtime_context != &context) {
+    if (!impl_->lua_runtime.initialized() || impl_->runtime_context != &context) {
         return;
     }
-    skynet_snlua_signal(impl_->service, signal_value);
+    impl_->lua_runtime.Signal(signal_value);
 }
 
 lua_State* LuaService::state() const noexcept {
-    return skynet_snlua_state(impl_->service);
+    return impl_->lua_runtime.state();
 }
 
 std::size_t LuaService::memory_used() const noexcept {
-    return skynet_snlua_memory(impl_->service);
+    return impl_->lua_runtime.memory_used();
 }
 
 std::size_t LuaService::memory_limit() const noexcept {
-    return skynet_snlua_memory_limit(impl_->service);
+    return impl_->lua_runtime.memory_limit();
 }
 
 bool LuaService::initialized() const noexcept {
-    return impl_->initialized;
+    return impl_->lua_runtime.initialized();
 }
 
 bool register_lua_service(runtime::ServiceRegistry& registry) {

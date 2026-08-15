@@ -14,8 +14,8 @@ class ServiceRegistry;
 
 namespace skynet::service {
 
-// LuaService is the C++ runtime wrapper for Skynet's SNLua service. The Lua
-// ABI and skynet.core implementation come from the vendored Skynet revision.
+// LuaService provides the SNLua lifecycle expected by the original Lua layer.
+// Its native runtime and skynet.core implementation are written in C++.
 class LuaService final : public runtime::Service {
 public:
     LuaService();

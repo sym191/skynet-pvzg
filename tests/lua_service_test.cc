@@ -150,6 +150,17 @@ int test_core_compatibility() {
         return fail("skynet.core.send did not preserve Skynet send semantics");
     }
 
+    if (!call_no_argument_function(
+            service.state(), "enable_forward_callback", &error)) {
+        return fail(error);
+    }
+    lua_pop(service.state(), 1);
+    service.dispatch(
+        context, Message::text(0x0100'0003U, 78, "forwarded"));
+    if (global_string(service.state(), "forwarded_payload") != "forwarded") {
+        return fail("forward callback did not transfer message ownership");
+    }
+
     service.signal(context, 1);
     bool saw_memory_report = false;
     for (const std::string& log : logs) {
@@ -160,6 +171,24 @@ int test_core_compatibility() {
     }
     if (!saw_memory_report) {
         return fail("SNLua signal did not report memory usage");
+    }
+
+    if (!call_no_argument_function(
+            service.state(), "enable_signal_callback", &error)) {
+        return fail(error);
+    }
+    lua_pop(service.state(), 1);
+    service.signal(context, 0);
+    service.dispatch(context, Message::text(0x0100'0004U, 79, "interrupt"));
+    bool saw_signal_interrupt = false;
+    for (const std::string& log : logs) {
+        if (log.find("signal 0") != std::string::npos) {
+            saw_signal_interrupt = true;
+            break;
+        }
+    }
+    if (!saw_signal_interrupt) {
+        return fail("SNLua signal did not interrupt Lua execution");
     }
     return EXIT_SUCCESS;
 }

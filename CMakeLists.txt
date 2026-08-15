@@ -122,6 +122,14 @@ target_link_libraries(skpvzg_lua_service_test
 add_test(NAME lua.service COMMAND skpvzg_lua_service_test)
 
 add_test(
+    NAME lua.service_native_sources
+    COMMAND
+        "${CMAKE_COMMAND}"
+        "-DCOMPILE_COMMANDS=${CMAKE_BINARY_DIR}/compile_commands.json"
+        -P "${PROJECT_SOURCE_DIR}/tests/cmake/check_lua_service_sources.cmake"
+)
+
+add_test(
     NAME configs.generated
     COMMAND
         "${CMAKE_COMMAND}"
