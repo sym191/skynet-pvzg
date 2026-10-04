@@ -22,10 +22,12 @@ public:
         const std::shared_ptr<Context>& context);
     [[nodiscard]] std::shared_ptr<Context> grab(Handle handle) const;
     [[nodiscard]] bool retire(Handle handle);
+    [[nodiscard]] std::vector<std::shared_ptr<Context>> retire_all();
 
     [[nodiscard]] bool name_handle(Handle handle, std::string name);
     [[nodiscard]] Handle find_name(std::string_view name) const;
     [[nodiscard]] std::vector<Handle> handles() const;
+    [[nodiscard]] std::size_t size() const;
     [[nodiscard]] std::uint8_t harbor_id() const;
 
 private:

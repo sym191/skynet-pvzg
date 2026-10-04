@@ -1,51 +1,78 @@
 #pragma once
 
-
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <span>
-#include <vector>
-#include <string_view>
-#include <algorithm>
 #include <string>
+#include <string_view>
+#include <vector>
 
-namespace skynet::runtime{
+namespace skynet::runtime {
 
-using Handle = uint32_t;
+using Handle = std::uint32_t;
+using ProtocolType = std::uint8_t;
+using MessageBuffer = std::vector<std::byte>;
 
 constexpr Handle kHandleMask = 0x00ff'ffffU;
 constexpr int kHandleRemoteShift = 24;
 
-enum class MessageType : std::uint8_t{
+enum class MessageType : ProtocolType {
     text = 0,
     response = 1,
+    multicast = 2,
+    client = 3,
+    system = 4,
+    harbor = 5,
+    socket = 6,
+    error = 7,
+    queue = 8,
+    debug = 9,
+    lua = 10,
+    snax = 11,
+    trace = 12,
 };
 
-struct Message{
-    Handle source = 0;
-    int session = 0;
-    MessageType type = MessageType::text;
-    std::vector<std::byte> data;
+struct Message {
+    Handle source{0};
+    int session{0};
+    ProtocolType type{static_cast<ProtocolType>(MessageType::text)};
+    MessageBuffer data;
 
-
-    [[nodiscard]] static Message text(Handle source_handle, int session_id, std::string_view payload){
-        Message msg;
-        msg.source = source_handle;
-        msg.session = session_id;
-        msg.type = MessageType::text;
-        auto bytes = std::as_bytes(std::span(payload.data(), payload.size()));
-        msg.data.resize(bytes.size());
-        std::copy(bytes.begin(), bytes.end(), msg.data.begin());
-        return msg;
+    [[nodiscard]] static Message FromString(
+        Handle source_handle,
+        int session_id,
+        ProtocolType protocol,
+        std::string_view payload
+    ) {
+        Message message{
+            .source = source_handle,
+            .session = session_id,
+            .type = protocol,
+            .data = {},
+        };
+        const auto bytes = std::as_bytes(std::span(payload.data(), payload.size()));
+        message.data.assign(bytes.begin(), bytes.end());
+        return message;
     }
 
-    [[nodiscard]] std::string text_payload() const {
+    [[nodiscard]] static Message Text(
+        Handle source_handle,
+        int session_id,
+        std::string_view payload
+    ) {
+        return FromString(
+            source_handle,
+            session_id,
+            static_cast<ProtocolType>(MessageType::text),
+            payload);
+    }
+
+    [[nodiscard]] std::string StringPayload() const {
         return std::string(
             reinterpret_cast<const char*>(data.data()),
-            data.size()
-        );
+            data.size());
     }
-
 };
 
-
-} // skynet::runtime
+}  // namespace skynet::runtime

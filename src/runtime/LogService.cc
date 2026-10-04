@@ -61,7 +61,7 @@ void LogService::dispatch(Context& context, Message msg) {
         return;
     }
     logger_->info("[source={:08x} session={}] {}", msg.source, msg.session,
-        msg.text_payload());
+        msg.StringPayload());
 }
 
 void LogService::signal(Context& context, int signal) {

@@ -22,6 +22,22 @@ public:
             return "invalid runtime config string";
         case RuntimeErrc::logger_creation_failed:
             return "failed to create runtime logger";
+        case RuntimeErrc::invalid_argument:
+            return "invalid runtime argument";
+        case RuntimeErrc::runtime_not_running:
+            return "runtime is not running";
+        case RuntimeErrc::runtime_stopping:
+            return "runtime is stopping";
+        case RuntimeErrc::scheduler_start_failed:
+            return "failed to start runtime scheduler";
+        case RuntimeErrc::timer_start_failed:
+            return "failed to start runtime timer";
+        case RuntimeErrc::service_not_found:
+            return "service factory was not found";
+        case RuntimeErrc::service_init_failed:
+            return "service initialization failed";
+        case RuntimeErrc::handle_exhausted:
+            return "runtime handle space is exhausted";
         }
 
         return "unknown runtime error";

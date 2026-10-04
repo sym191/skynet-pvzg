@@ -65,6 +65,8 @@ add_original_skynet_target(
 )
 
 add_subdirectory(src/network)
+add_subdirectory(src/lua)
+add_subdirectory(src/config)
 add_subdirectory(src/runtime)
 
 add_executable(skynet_refactor src/skynet_refactor/main.cc)
@@ -72,6 +74,7 @@ target_link_libraries(skynet_refactor
     PRIVATE
         asio::asio
         spdlog::spdlog
+        skynet::config
         skynet::runtime
 )
 set_target_properties(skynet_refactor PROPERTIES
@@ -98,6 +101,18 @@ target_link_libraries(skpvzg_runtime_log_test
 
 add_test(NAME runtime.log COMMAND skpvzg_runtime_log_test)
 
+add_executable(skpvzg_runtime_config_test tests/runtime_config_test.cc)
+target_compile_definitions(skpvzg_runtime_config_test
+    PRIVATE
+        SKPVZG_REFACTOR_CONFIG="${SKPVZG_GENERATED_CONFIG_DIR}/skynet_refactor.lua"
+)
+target_link_libraries(skpvzg_runtime_config_test PRIVATE skynet::config)
+add_test(NAME runtime.config COMMAND skpvzg_runtime_config_test)
+
+add_executable(skpvzg_runtime_core_test tests/runtime_core_test.cc)
+target_link_libraries(skpvzg_runtime_core_test PRIVATE skynet::runtime)
+add_test(NAME runtime.core COMMAND skpvzg_runtime_core_test)
+
 add_test(
     NAME configs.generated
     COMMAND
@@ -118,5 +133,10 @@ add_test(
         -P "${PROJECT_SOURCE_DIR}/tests/cmake/check_original_outputs.cmake"
 )
 
-add_custom_target(skpvzg_tests DEPENDS skpvzg_dependency_smoke skpvzg_runtime_log_test)
+add_custom_target(skpvzg_tests DEPENDS
+    skpvzg_dependency_smoke
+    skpvzg_runtime_log_test
+    skpvzg_runtime_config_test
+    skpvzg_runtime_core_test
+)
 add_custom_target(skynet_all DEPENDS skynet_refactor skynet_original skynet_network skpvzg_tests)

@@ -2,10 +2,15 @@
 add_library(skynet_runtime
     STATIC
     MessageQueue.cc
+    GlobalQueue.cc
     Environment.cc
     ServiceRegistry.cc
     HandleManager.cc
     LogService.cc
+    Context.cc
+    Scheduler.cc
+    TimerService.cc
+    Runtime.cc
     runtime_error.cc
     Service.cc
 )
