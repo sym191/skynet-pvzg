@@ -102,6 +102,13 @@ foreach(STAGE3_VARIANT IN ITEMS original refactor)
     set(STAGE3_LUACLIB "${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/luaclib")
     configure_file(tests/cmake/stage3_config.lua.in
         "${SKPVZG_GENERATED_CONFIG_DIR}/stage3-${STAGE3_VARIANT}.lua" @ONLY)
+    configure_file(tests/cmake/stage4_config.lua.in
+        "${SKPVZG_GENERATED_CONFIG_DIR}/stage4-${STAGE3_VARIANT}.lua" @ONLY)
+    add_test(NAME "lua.stage4.${STAGE3_VARIANT}" COMMAND "${CMAKE_COMMAND}"
+        "-DSKYNET=${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/bin/skynet"
+        "-DCONFIG=${SKPVZG_GENERATED_CONFIG_DIR}/stage4-${STAGE3_VARIANT}.lua"
+        -P "${PROJECT_SOURCE_DIR}/tests/cmake/run_stage4.cmake")
+    set_tests_properties("lua.stage4.${STAGE3_VARIANT}" PROPERTIES TIMEOUT 65)
     add_test(NAME "lua.stage3.${STAGE3_VARIANT}" COMMAND "${CMAKE_COMMAND}"
         "-DSKYNET=${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/bin/skynet"
         "-DCONFIG=${SKPVZG_GENERATED_CONFIG_DIR}/stage3-${STAGE3_VARIANT}.lua"
@@ -158,7 +165,11 @@ add_test(NAME runtime.contract COMMAND skpvzg_runtime_contract_test)
 add_executable(skpvzg_network_runtime_test tests/network_runtime_test.cc)
 target_link_libraries(skpvzg_network_runtime_test PRIVATE skynet::network)
 add_test(NAME network.runtime COMMAND skpvzg_network_runtime_test)
-set_tests_properties(runtime.contract network.runtime PROPERTIES TIMEOUT 30)
+add_executable(skpvzg_runtime_socket_test tests/runtime_socket_test.cc)
+target_include_directories(skpvzg_runtime_socket_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/skynet/skynet-src")
+target_link_libraries(skpvzg_runtime_socket_test PRIVATE skynet::runtime)
+add_test(NAME runtime.socket COMMAND skpvzg_runtime_socket_test)
+set_tests_properties(runtime.contract runtime.socket network.runtime PROPERTIES TIMEOUT 30)
 
 add_test(
     NAME configs.generated
@@ -188,5 +199,6 @@ add_custom_target(skpvzg_tests DEPENDS
     skpvzg_runtime_boundary_test
     skpvzg_runtime_contract_test
     skpvzg_network_runtime_test
+    skpvzg_runtime_socket_test
 )
 add_custom_target(skynet_all DEPENDS skynet_refactor skynet_original skynet_network skpvzg_tests)

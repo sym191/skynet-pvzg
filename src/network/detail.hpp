@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <expected>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -70,7 +71,7 @@ public:
 
     virtual void request_start(ServiceId new_owner) = 0;
     virtual void request_pause() = 0;
-    virtual void request_send(Buffer buffer, SendPriority priority) = 0;
+    virtual std::expected<void, Error> request_send(Buffer buffer, SendPriority priority) = 0;
     virtual void request_close(bool abort, ServiceId expected_owner = 0) = 0;
     virtual void request_nodelay(bool enabled) = 0;
     virtual void request_udp_connect(Endpoint endpoint);
@@ -90,11 +91,6 @@ protected:
     Strand strand_;
     bool close_sent_{false};
 };
-
-[[nodiscard]] std::expected<void, Error> validate_owner(
-    const std::shared_ptr<SocketBase>& socket,
-    ServiceId owner
-);
 
 [[nodiscard]] std::expected<void, Error> validate_kind(
     const std::shared_ptr<SocketBase>& socket,
@@ -126,7 +122,7 @@ void begin_connect(
     ServiceId owner
 );
 
-void open_listener(
+[[nodiscard]] std::future<std::expected<void, Error>> open_listener(
     const std::shared_ptr<SocketBase>& socket,
     std::string host,
     std::uint16_t port,

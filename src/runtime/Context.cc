@@ -1,6 +1,7 @@
 #include "Context.hpp"
 
 #include "Runtime.hpp"
+#include "SocketEvent.hpp"
 #include "ThreadClock.hpp"
 
 #include <algorithm>
@@ -49,8 +50,12 @@ void Context::dispatch_native(Message message) {
     }
 }
 
-bool Context::invoke_native(const Message& message) {
-    return callback_ && callback_(reinterpret_cast<skynet_context*>(this), callback_userdata_,
+bool Context::invoke_native(Message& message) {
+    if (!callback_) { return false; }
+    // The native consumer now owns the nested buffer, independently of whether
+    // it retains the outer message. Rejected/unconsumed messages keep RAII cleanup.
+    handoff_socket_message(message.data);
+    return callback_(reinterpret_cast<skynet_context*>(this), callback_userdata_,
         message.type, message.session, message.source, message.data.data(), message.data.size());
 }
 

@@ -40,6 +40,9 @@ class EventSink {
 public:
     virtual ~EventSink() = default;
     virtual bool publish(Event&& event) noexcept = 0;
+    // Checked on socket strands before ownership transfers. Standalone sinks
+    // may accept arbitrary service ids; actor sinks reject retired services.
+    virtual bool owner_alive(ServiceId) const noexcept { return true; }
 };
 
 enum class ErrorCode : std::uint8_t {
@@ -97,6 +100,8 @@ public:
 
     [[nodiscard]] bool running() const noexcept;
 
+    // Returns after bind/listen succeeds; the listen-ready event is already
+    // queued. Must not be called from an I/O worker/EventSink callback.
     [[nodiscard]] std::expected<SocketId, Error> listen(
         ServiceId owner,
         std::string host,

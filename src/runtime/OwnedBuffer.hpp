@@ -61,6 +61,8 @@ public:
     const std::byte* begin() const noexcept { return data(); }
     std::byte* end() noexcept { return size_ ? data() + size_ : data(); }
     const std::byte* end() const noexcept { return size_ ? data() + size_ : data(); }
+    Deleter deleter() const noexcept { return storage_.get_deleter(); }
+    void set_deleter(Deleter deleter) noexcept { storage_.get_deleter() = deleter; }
     void* release() noexcept { size_ = 0; return storage_.release(); }
 
 private:

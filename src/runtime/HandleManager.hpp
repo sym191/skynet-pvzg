@@ -21,6 +21,15 @@ public:
     [[nodiscard]] Handle register_context(
         const std::shared_ptr<Context>& context);
     [[nodiscard]] std::shared_ptr<Context> grab(Handle handle) const;
+    [[nodiscard]] bool contains(Handle handle) const;
+    // Keep the table entry alive without lending a producer its last reference.
+    // The visitor must not reenter HandleManager; it may enqueue and schedule.
+    template <class Visitor>
+    bool with_context(Handle handle, Visitor&& visitor) const {
+        std::shared_lock lock(mutex_);
+        const auto found = contexts_.find(handle);
+        return found != contexts_.end() && visitor(found->second);
+    }
     [[nodiscard]] bool retire(Handle handle);
     [[nodiscard]] std::vector<std::shared_ptr<Context>> retire_all();
 

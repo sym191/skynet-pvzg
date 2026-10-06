@@ -48,6 +48,11 @@ std::shared_ptr<Context> HandleManager::grab(Handle handle) const {
     return it->second;
 }
 
+bool HandleManager::contains(Handle handle) const {
+    std::shared_lock lock(mutex_);
+    return contexts_.contains(handle);
+}
+
 bool HandleManager::retire(Handle handle) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     const bool erased = contexts_.erase(handle) > 0;

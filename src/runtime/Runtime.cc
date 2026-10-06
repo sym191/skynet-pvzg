@@ -1,6 +1,7 @@
 #include "Runtime.hpp"
 
 #include "Context.hpp"
+#include "SocketEvent.hpp"
 #include "runtime_error.hpp"
 
 #include <cerrno>
@@ -108,7 +109,7 @@ struct CommandTarget {
 }  // namespace
 
 Runtime::Runtime(RuntimeOptions options)
-    : options_(options), handles_(options.harbor_id) {}
+    : network_(*this), options_(options), handles_(options.harbor_id) {}
 
 Runtime::~Runtime() {
     request_stop();
@@ -156,12 +157,20 @@ std::expected<void, std::error_code> Runtime::start() {
         return std::unexpected(make_error_code(RuntimeErrc::timer_start_failed));
     }
 
+    if (!network_.start()) {
+        timer_.request_stop();
+        timer_.join();
+        scheduler_.request_stop();
+        scheduler_.join();
+        return std::unexpected(make_error_code(RuntimeErrc::network_start_failed));
+    }
     state_.store(State::running, std::memory_order_release);
     try {
         monitor_worker_ = std::jthread(
             [this](std::stop_token token) { monitor_loop(token); });
     } catch (...) {
         state_.store(State::stopped, std::memory_order_release);
+        network_.join();
         timer_.request_stop();
         timer_.join();
         scheduler_.request_stop();
@@ -180,6 +189,7 @@ void Runtime::request_stop() noexcept {
         }
         state_.store(State::stopping, std::memory_order_release);
         stop_in_progress_ = true;
+        network_.request_stop();
         timer_.request_stop();
         if (monitor_worker_.joinable()) {
             monitor_worker_.request_stop();
@@ -207,6 +217,7 @@ void Runtime::join() noexcept {
         std::unique_lock lock(lifecycle_mutex_);
         lifecycle_ready_.wait(lock, [this] { return !stop_in_progress_ && active_launches_ == 0; });
     }
+    network_.join();
     timer_.join();
     if (monitor_worker_.joinable()) {
         monitor_worker_.join();
@@ -301,6 +312,7 @@ std::expected<Handle, std::error_code> Runtime::launch(
     if (!context->initialize(arguments)) {
         (void)handles_.retire(handle);
         report_dropped_messages(handle, context->deactivate());
+        network_.close_all(handle);
         return std::unexpected(make_error_code(RuntimeErrc::service_init_failed));
     }
     if (handles_.grab(handle) != context) {
@@ -332,6 +344,7 @@ bool Runtime::retire(Handle handle) {
     }
 
     report_dropped_messages(handle, context->deactivate());
+    network_.close_all(handle);
     if (Context::current() != context.get()) { context->signal(0); }
     {
         std::lock_guard lock(lifecycle_mutex_);
@@ -370,24 +383,36 @@ void Runtime::initialization_failed(Handle handle) {
     }
 }
 
+bool Runtime::owner_alive(network::ServiceId owner) const noexcept {
+    return handles_.contains(owner);
+}
+
+bool Runtime::publish(network::Event&& event) noexcept {
+    try {
+        const auto destination = event.destination;
+        Message message{.source = 0, .session = 0,
+            .type = static_cast<ProtocolType>(MessageType::socket),
+            .data = make_socket_message(std::move(event))};
+        return send(destination, std::move(message));
+    } catch (...) { return false; }
+}
+
 bool Runtime::send(Handle destination, Message message) {
     if (!running()) {
         return false;
     }
-    auto context = handles_.grab(destination);
-    if (context == nullptr) {
+    // A producer (including an I/O worker) must never become the last owner of
+    // a retired Context: its Lua VM can run finalizers during destruction.
+    return handles_.with_context(destination, [&](const auto& context) {
+        switch (context->enqueue(std::move(message))) {
+        case EnqueueResult::rejected: return false;
+        case EnqueueResult::queued: return true;
+        case EnqueueResult::schedule:
+            scheduler_.schedule(context);
+            return true;
+        }
         return false;
-    }
-    switch (context->enqueue(std::move(message))) {
-    case EnqueueResult::rejected:
-        return false;
-    case EnqueueResult::queued:
-        return true;
-    case EnqueueResult::schedule:
-        scheduler_.schedule(std::move(context));
-        return true;
-    }
-    return false;
+    });
 }
 
 bool Runtime::send(

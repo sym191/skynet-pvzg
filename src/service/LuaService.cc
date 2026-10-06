@@ -11,10 +11,27 @@ extern "C" {
 #include <lua.h>
 #include <lualib.h>
 int luaopen_skynet_core(lua_State*);
+int luaopen_skynet_socketdriver(lua_State*);
+int luaopen_skynet_netpack(lua_State*);
 }
 
 namespace skynet::service {
 void install_lua_support(lua_State* state);
+namespace {
+int unsupported_socket_api(lua_State* state) {
+    return luaL_error(state, "UDP, FD binding and socket info require stage 5");
+}
+int open_socket_driver(lua_State* state) {
+    luaopen_skynet_socketdriver(state);
+    // Some upstream functions (notably bind) assume success and would wait
+    // forever on a negative id. Expose a diagnostic until stage 5 implements them.
+    for (const char* name : {"bind", "info", "udp", "udp_connect", "udp_dial", "udp_listen", "udp_send"}) {
+        lua_pushcfunction(state, unsupported_socket_api);
+        lua_setfield(state, -2, name);
+    }
+    return 1;
+}
+}  // namespace
 
 LuaService::~LuaService() { if (state_) { lua_close(state_); } }
 
@@ -60,6 +77,10 @@ int LuaService::initialize_lua(lua_State* state) {
     luaL_getsubtable(state, LUA_REGISTRYINDEX, LUA_PRELOAD_TABLE);
     lua_pushcfunction(state, luaopen_skynet_core);
     lua_setfield(state, -2, "skynet.core");
+    lua_pushcfunction(state, open_socket_driver);
+    lua_setfield(state, -2, "skynet.socketdriver");
+    lua_pushcfunction(state, luaopen_skynet_netpack);
+    lua_setfield(state, -2, "skynet.netpack");
     lua_pop(state, 1);
     for (const auto& [name, value] : self->globals_) {
         lua_pushlstring(state, value.data(), value.size());

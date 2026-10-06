@@ -1,5 +1,7 @@
 #pragma once
 
+#include "skynet/network/runtime.hpp"
+
 #include "Environment.hpp"
 #include "HandleManager.hpp"
 #include "Message.hpp"
@@ -33,7 +35,7 @@ struct RuntimeOptions {
     bool profile{true};
 };
 
-class Runtime final {
+class Runtime final : private network::EventSink {
 public:
     explicit Runtime(RuntimeOptions options = {});
     ~Runtime();
@@ -50,6 +52,7 @@ public:
     void wait();
     [[nodiscard]] bool running() const noexcept;
 
+    [[nodiscard]] network::Runtime& sockets() noexcept { return network_; }
     [[nodiscard]] ServiceRegistry& services() noexcept;
     [[nodiscard]] Environment& environment() noexcept;
     [[nodiscard]] const Environment& environment() const noexcept;
@@ -103,10 +106,13 @@ private:
         stopping,
     };
 
+    bool publish(network::Event&& event) noexcept override;
+    bool owner_alive(network::ServiceId owner) const noexcept override;
     void monitor_loop(std::stop_token stop_token) noexcept;
     std::size_t service_count_locked() const;
     void report_dropped_messages(Handle retired, std::vector<Message> messages);
 
+    network::Runtime network_;
     RuntimeOptions options_;
     Environment environment_;
     ServiceRegistry services_;

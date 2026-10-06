@@ -183,25 +183,6 @@ void SocketBase::unregister() noexcept {
     core_.directory.erase(id_);
 }
 
-std::expected<void, Error> validate_owner(
-    const std::shared_ptr<SocketBase>& socket,
-    ServiceId owner
-) {
-    if (!socket) {
-        return std::unexpected(Error{
-            ErrorCode::invalid_socket,
-            "socket id is not active",
-        });
-    }
-    if (socket->owner_snapshot() != owner) {
-        return std::unexpected(Error{
-            ErrorCode::wrong_owner,
-            "socket is owned by another service",
-        });
-    }
-    return {};
-}
-
 std::expected<void, Error> validate_kind(
     const std::shared_ptr<SocketBase>& socket,
     SocketKind kind

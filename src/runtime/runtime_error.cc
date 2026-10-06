@@ -32,6 +32,8 @@ public:
             return "failed to start runtime scheduler";
         case RuntimeErrc::timer_start_failed:
             return "failed to start runtime timer";
+        case RuntimeErrc::network_start_failed:
+            return "failed to start runtime network";
         case RuntimeErrc::service_not_found:
             return "service factory was not found";
         case RuntimeErrc::service_init_failed:

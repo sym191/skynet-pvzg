@@ -8,7 +8,7 @@
 │   ├── examples/
 │   ├── lualib/
 │   └── service/
-├── src/skynet_refactor/   # New C++23 runtime scaffold
+├── src/skynet_refactor/   # C++23 runtime executable
 ├── tests/                 # CTest smoke tests
 ├── third_party/skynet/    # Original skynet git submodule
 └── tools/                 # Bootstrap, build, and run scripts
@@ -35,3 +35,4 @@ ctest --preset linux-debug
 ## 专题文档
 
 - [Network 设计架构](network-architecture.md)
+- [阶段四 TCP 与 socketdriver 交付](stage4-tcp.md)

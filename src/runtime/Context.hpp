@@ -34,7 +34,7 @@ public:
     using NativeCallback = int (*)(skynet_context*, void*, int, int, Handle, const void*, std::size_t);
     void set_callback(void* userdata, NativeCallback callback) noexcept;
     void dispatch_native(Message message);
-    bool invoke_native(const Message& message);
+    bool invoke_native(Message& message);
     Runtime& runtime() noexcept { return runtime_; }
     static Context* current() noexcept;
     const char* native_command(const char* command, const char* parameter);

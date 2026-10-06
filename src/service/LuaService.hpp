@@ -23,7 +23,7 @@ private:
     static void interrupt_hook(lua_State* state, lua_Debug* debug);
     static int initialize_lua(lua_State* state);
     static int dispatch_lua(lua_State* state);
-    const runtime::Message* current_message_{nullptr};
+    runtime::Message* current_message_{nullptr};
     bool reserved_message_{false};
     lua_State* state_{nullptr};
     runtime::Context* context_{nullptr};

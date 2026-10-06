@@ -60,7 +60,7 @@ int main(int argc, char* argv[]) {
 
     const auto log_config = make_log_config(*loaded_config, config_path);
     if (loaded_config->harbor_id != 0 || loaded_config->daemon) {
-        spdlog::error("stage 3 supports harbor=0 and foreground operation; multi-node/daemon support is pending");
+        spdlog::error("refactor supports harbor=0 and foreground operation; multi-node/daemon support is pending");
         return EXIT_FAILURE;
     }
     std::signal(SIGPIPE, SIG_IGN);

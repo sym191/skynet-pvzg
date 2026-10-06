@@ -5,8 +5,11 @@ add_library(skynet_lua_service STATIC
     LuaSupport.cc
     NativeService.cc
     ../compat/skynet_compat.cc
+    ../compat/socket_compat.cc
     "${PROJECT_SOURCE_DIR}/third_party/skynet/lualib-src/lua-skynet.c"
     "${PROJECT_SOURCE_DIR}/third_party/skynet/lualib-src/lua-seri.c"
+    "${PROJECT_SOURCE_DIR}/third_party/skynet/lualib-src/lua-socket.c"
+    "${PROJECT_SOURCE_DIR}/third_party/skynet/lualib-src/lua-netpack.c"
 )
 target_include_directories(skynet_lua_service PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
     "${PROJECT_SOURCE_DIR}/third_party/skynet/skynet-src")

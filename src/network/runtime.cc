@@ -79,22 +79,10 @@ std::expected<std::shared_ptr<detail::SocketBase>, Error> acquire_socket(
     return value;
 }
 
-std::expected<std::shared_ptr<detail::SocketBase>, Error> acquire_owned_socket(
-    detail::Core& core,
-    ServiceId owner,
-    SocketId socket
-) {
-    auto value = core.directory.acquire(socket);
-    if (auto valid = detail::validate_owner(value, owner); !valid) {
-        return std::unexpected(valid.error());
-    }
-    return value;
-}
-
 std::expected<void, Error> udp_not_implemented() {
     return std::unexpected(make_error(
         ErrorCode::invalid_argument,
-        "UDP is not implemented by this TCP completion demo"
+        "UDP support is scheduled for stage 5"
     ));
 }
 
@@ -306,11 +294,14 @@ std::expected<SocketId, Error> Runtime::listen(
         ));
     }
 
-    std::scoped_lock lock(impl_->lifecycle_mutex);
+    std::unique_lock lock(impl_->lifecycle_mutex);
     if (auto ready = impl_->require_running(); !ready) {
         return std::unexpected(ready.error());
     }
 
+    if (!impl_->core.sink.owner_alive(owner)) {
+        return std::unexpected(make_error(ErrorCode::wrong_owner, "socket owner has retired"));
+    }
     auto reserved = impl_->core.directory.reserve();
     if (!reserved) {
         return std::unexpected(reserved.error());
@@ -327,7 +318,13 @@ std::expected<SocketId, Error> Runtime::listen(
     }
 
     try {
-        detail::open_listener(socket, std::move(host), port, backlog);
+        auto opened = detail::open_listener(socket, std::move(host), port, backlog);
+        // Native Skynet listen returns -1 for bind/resolve errors. Wait for the
+        // OS result, while allowing stop/retire to cancel a pending listen.
+        lock.unlock();
+        if (auto result = opened.get(); !result) {
+            return std::unexpected(result.error());
+        }
     } catch (const std::exception& error) {
         impl_->core.directory.erase(id);
         return std::unexpected(make_error(
@@ -368,6 +365,9 @@ std::expected<SocketId, Error> Runtime::connect(
         return std::unexpected(ready.error());
     }
 
+    if (!impl_->core.sink.owner_alive(owner)) {
+        return std::unexpected(make_error(ErrorCode::wrong_owner, "socket owner has retired"));
+    }
     auto reserved = impl_->core.directory.reserve();
     if (!reserved) {
         return std::unexpected(reserved.error());
@@ -446,7 +446,7 @@ std::expected<void, Error> Runtime::start_socket(
 }
 
 std::expected<void, Error> Runtime::pause_socket(
-    ServiceId owner,
+    ServiceId,
     SocketId socket
 ) {
     std::scoped_lock lock(impl_->lifecycle_mutex);
@@ -454,7 +454,8 @@ std::expected<void, Error> Runtime::pause_socket(
         return ready;
     }
 
-    auto value = acquire_owned_socket(impl_->core, owner, socket);
+    // These operations are intentionally available across services, as in Skynet.
+    auto value = acquire_socket(impl_->core, socket);
     if (!value) {
         return std::unexpected(value.error());
     }
@@ -464,7 +465,7 @@ std::expected<void, Error> Runtime::pause_socket(
 }
 
 std::expected<void, Error> Runtime::send(
-    ServiceId owner,
+    ServiceId,
     SocketId socket,
     Buffer buffer,
     SendPriority priority
@@ -474,7 +475,8 @@ std::expected<void, Error> Runtime::send(
         return ready;
     }
 
-    auto value = acquire_owned_socket(impl_->core, owner, socket);
+    // These operations are intentionally available across services, as in Skynet.
+    auto value = acquire_socket(impl_->core, socket);
     if (!value) {
         return std::unexpected(value.error());
     }
@@ -485,8 +487,7 @@ std::expected<void, Error> Runtime::send(
         return kind;
     }
 
-    (*value)->request_send(std::move(buffer), priority);
-    return {};
+    return (*value)->request_send(std::move(buffer), priority);
 }
 
 std::expected<void, Error> Runtime::send(
@@ -507,7 +508,7 @@ std::expected<void, Error> Runtime::send(
 }
 
 std::expected<void, Error> Runtime::close_socket(
-    ServiceId owner,
+    ServiceId,
     SocketId socket
 ) {
     std::scoped_lock lock(impl_->lifecycle_mutex);
@@ -515,7 +516,8 @@ std::expected<void, Error> Runtime::close_socket(
         return ready;
     }
 
-    auto value = acquire_owned_socket(impl_->core, owner, socket);
+    // These operations are intentionally available across services, as in Skynet.
+    auto value = acquire_socket(impl_->core, socket);
     if (!value) {
         return std::unexpected(value.error());
     }
@@ -525,7 +527,7 @@ std::expected<void, Error> Runtime::close_socket(
 }
 
 std::expected<void, Error> Runtime::shutdown_socket(
-    ServiceId owner,
+    ServiceId,
     SocketId socket
 ) {
     std::scoped_lock lock(impl_->lifecycle_mutex);
@@ -533,7 +535,8 @@ std::expected<void, Error> Runtime::shutdown_socket(
         return ready;
     }
 
-    auto value = acquire_owned_socket(impl_->core, owner, socket);
+    // These operations are intentionally available across services, as in Skynet.
+    auto value = acquire_socket(impl_->core, socket);
     if (!value) {
         return std::unexpected(value.error());
     }
@@ -543,7 +546,7 @@ std::expected<void, Error> Runtime::shutdown_socket(
 }
 
 std::expected<void, Error> Runtime::set_nodelay(
-    ServiceId owner,
+    ServiceId,
     SocketId socket,
     bool enabled
 ) {
@@ -552,7 +555,8 @@ std::expected<void, Error> Runtime::set_nodelay(
         return ready;
     }
 
-    auto value = acquire_owned_socket(impl_->core, owner, socket);
+    // These operations are intentionally available across services, as in Skynet.
+    auto value = acquire_socket(impl_->core, socket);
     if (!value) {
         return std::unexpected(value.error());
     }
@@ -574,9 +578,9 @@ void Runtime::close_all(ServiceId owner) noexcept {
     }
     const auto sockets = impl_->core.directory.snapshot();
     for (const auto& socket : sockets) {
-        if (socket->owner_snapshot() == owner) {
-            socket->request_close(true, owner);
-        }
+        // Check on the strand: a queued transfer may not be visible in the
+        // snapshot yet. Checking the atomic owner here can miss that transfer.
+        socket->request_close(true, owner);
     }
 }
 

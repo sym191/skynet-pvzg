@@ -15,6 +15,7 @@ enum class RuntimeErrc {
     runtime_stopping,
     scheduler_start_failed,
     timer_start_failed,
+    network_start_failed,
     service_not_found,
     service_init_failed,
     handle_exhausted,
