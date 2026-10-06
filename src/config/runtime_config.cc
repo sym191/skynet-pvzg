@@ -59,7 +59,7 @@ struct LuaStateDeleter {
 
 using LuaStatePtr = std::unique_ptr<lua_State, LuaStateDeleter>;
 
-[[nodiscard]] ConfigError LuaError(lua_State* state, std::string_view prefix) {
+[[nodiscard]] ConfigError lua_error(lua_State* state, std::string_view prefix) {
     const char* detail = lua_tostring(state, -1);
     std::string message(prefix);
     if (detail != nullptr) {
@@ -69,7 +69,7 @@ using LuaStatePtr = std::unique_ptr<lua_State, LuaStateDeleter>;
     return ConfigError{.message = std::move(message)};
 }
 
-[[nodiscard]] std::expected<std::string, ConfigError> ScalarToString(
+[[nodiscard]] std::expected<std::string, ConfigError> scalar_to_string(
     lua_State* state,
     int index,
     std::string_view key
@@ -95,7 +95,7 @@ using LuaStatePtr = std::unique_ptr<lua_State, LuaStateDeleter>;
     }
 }
 
-[[nodiscard]] std::expected<std::size_t, ConfigError> ParseThreadCount(
+[[nodiscard]] std::expected<std::size_t, ConfigError> parse_thread_count(
     std::string_view value
 ) {
     std::size_t result = 0;
@@ -110,7 +110,7 @@ using LuaStatePtr = std::unique_ptr<lua_State, LuaStateDeleter>;
     return result;
 }
 
-[[nodiscard]] std::expected<std::uint8_t, ConfigError> ParseHarborId(
+[[nodiscard]] std::expected<std::uint8_t, ConfigError> parse_harbor_id(
     std::string_view value
 ) {
     unsigned int result = 0;
@@ -127,7 +127,7 @@ using LuaStatePtr = std::unique_ptr<lua_State, LuaStateDeleter>;
 
 }  // namespace
 
-std::expected<RuntimeConfig, ConfigError> LoadRuntimeConfig(
+std::expected<RuntimeConfig, ConfigError> load_runtime_config(
     const std::filesystem::path& path
 ) {
     LuaStatePtr state(luaL_newstate());
@@ -144,13 +144,13 @@ std::expected<RuntimeConfig, ConfigError> LoadRuntimeConfig(
             kLoadConfig.size(),
             "=[skynet config]",
             "t") != LUA_OK) {
-        return std::unexpected(LuaError(state.get(), "failed to load config parser"));
+        return std::unexpected(lua_error(state.get(), "failed to load config parser"));
     }
 
     const std::string path_string = path.string();
     lua_pushlstring(state.get(), path_string.data(), path_string.size());
     if (lua_pcall(state.get(), 1, 1, 0) != LUA_OK) {
-        return std::unexpected(LuaError(state.get(), "failed to execute runtime config"));
+        return std::unexpected(lua_error(state.get(), "failed to execute runtime config"));
     }
     if (!lua_istable(state.get(), -1)) {
         return std::unexpected(ConfigError{
@@ -169,7 +169,7 @@ std::expected<RuntimeConfig, ConfigError> LoadRuntimeConfig(
         std::size_t key_size = 0;
         const char* key_data = lua_tolstring(state.get(), -2, &key_size);
         const std::string key(key_data, key_size);
-        auto value = ScalarToString(state.get(), -1, key);
+        auto value = scalar_to_string(state.get(), -1, key);
         if (!value) {
             return std::unexpected(std::move(value.error()));
         }
@@ -177,43 +177,49 @@ std::expected<RuntimeConfig, ConfigError> LoadRuntimeConfig(
         lua_pop(state.get(), 1);
     }
 
-    if (const auto value = FindConfigValue(config, "thread")) {
-        auto parsed = ParseThreadCount(*value);
+    if (const auto value = find_config_value(config, "thread")) {
+        auto parsed = parse_thread_count(*value);
         if (!parsed) {
             return std::unexpected(std::move(parsed.error()));
         }
         config.thread_count = *parsed;
     }
-    if (const auto value = FindConfigValue(config, "harbor")) {
-        auto parsed = ParseHarborId(*value);
+    if (const auto value = find_config_value(config, "harbor")) {
+        auto parsed = parse_harbor_id(*value);
         if (!parsed) {
             return std::unexpected(std::move(parsed.error()));
         }
         config.harbor_id = *parsed;
     }
-    if (const auto value = FindConfigValue(config, "cpath")) {
+    if (const auto value = find_config_value(config, "cpath")) {
         config.module_path = *value;
     }
-    if (const auto value = FindConfigValue(config, "bootstrap")) {
+    if (const auto value = find_config_value(config, "bootstrap")) {
         config.bootstrap = *value;
     }
-    if (const auto value = FindConfigValue(config, "daemon")) {
+    if (const auto value = find_config_value(config, "daemon")) {
         config.daemon = std::string(*value);
     }
-    if (const auto value = FindConfigValue(config, "logger")) {
+    if (const auto value = find_config_value(config, "logger")) {
         config.logger = std::string(*value);
     }
-    if (const auto value = FindConfigValue(config, "logservice")) {
+    if (const auto value = find_config_value(config, "logservice")) {
         config.log_service = *value;
     }
-    if (const auto value = FindConfigValue(config, "profile")) {
+    if (const auto value = find_config_value(config, "profile")) {
         config.profile = *value == "true";
     }
 
+    config.environment.try_emplace("thread", std::to_string(config.thread_count));
+    config.environment.try_emplace("harbor", std::to_string(config.harbor_id));
+    config.environment.try_emplace("cpath", config.module_path);
+    config.environment.try_emplace("bootstrap", config.bootstrap);
+    config.environment.try_emplace("logservice", config.log_service);
+    config.environment.try_emplace("profile", config.profile ? "true" : "false");
     return config;
 }
 
-std::optional<std::string_view> FindConfigValue(
+std::optional<std::string_view> find_config_value(
     const RuntimeConfig& config,
     std::string_view key
 ) {

@@ -34,7 +34,7 @@ struct ProbeState {
     bool commands_ok{false};
 };
 
-void UpdateMaximum(std::atomic<int>& maximum, int value) {
+void update_maximum(std::atomic<int>& maximum, int value) {
     int current = maximum.load(std::memory_order_relaxed);
     while (current < value && !maximum.compare_exchange_weak(
             current, value, std::memory_order_relaxed)) {
@@ -49,7 +49,7 @@ public:
     bool init(runtime::Context& context, std::string_view arguments) override {
         if (arguments == "primary") {
             state_->primary_handle = context.handle();
-            const auto timeout = context.Command("TIMEOUT", "2");
+            const auto timeout = context.command("TIMEOUT", "2");
             if (!timeout) {
                 return false;
             }
@@ -60,44 +60,44 @@ public:
 
     void dispatch(runtime::Context& context, runtime::Message message) override {
         const int active = state_->active_dispatches.fetch_add(1) + 1;
-        UpdateMaximum(state_->maximum_dispatches, active);
+        update_maximum(state_->maximum_dispatches, active);
         std::this_thread::sleep_for(50us);
 
-        const std::string payload = message.StringPayload();
+        const std::string payload = message.string_payload();
         if (payload == "exercise-commands") {
-            const auto reg = context.Command("REG");
-            const auto query = context.Command("QUERY", ".probe");
-            const auto marker = context.Command("GETENV", "marker");
-            const auto set_dynamic = context.Command("SETENV", "dynamic value");
-            const auto dynamic = context.Command("GETENV", "dynamic");
-            const auto start_time = context.Command("STARTTIME");
-            const auto stat_message = context.Command("STAT", "message");
-            const auto named = context.Command("NAME", ".probe_alias " + *reg);
-            const auto alias = context.Command("QUERY", ".probe_alias");
-            const auto launched = context.Command("LAUNCH", "probe child");
-            const auto monitor_set = context.Command("MONITOR", *reg);
-            const auto monitor_get = context.Command("MONITOR");
-            const auto signal = context.Command("SIGNAL", *reg + " 0x7");
-            const auto log_on = context.Command("LOGON", *reg);
-            const auto log_off = context.Command("LOGOFF", *reg);
+            const auto reg = context.command("REG");
+            const auto query = context.command("QUERY", ".probe");
+            const auto marker = context.command("GETENV", "marker");
+            const auto set_dynamic = context.command("SETENV", "dynamic value");
+            const auto dynamic = context.command("GETENV", "dynamic");
+            const auto start_time = context.command("STARTTIME");
+            const auto stat_message = context.command("STAT", "message");
+            const auto named = context.command("NAME", ".probe_alias " + *reg);
+            const auto alias = context.command("QUERY", ".probe_alias");
+            const auto launched = context.command("LAUNCH", "probe child");
+            const auto monitor_set = context.command("MONITOR", *reg);
+            const auto monitor_get = context.command("MONITOR");
+            const auto signal = context.command("SIGNAL", *reg + " 0x7");
+            const auto log_on = context.command("LOGON", *reg);
+            const auto log_off = context.command("LOGOFF", *reg);
             (void)set_dynamic;
             (void)monitor_set;
             (void)signal;
             (void)log_on;
             (void)log_off;
             if (launched) {
-                (void)context.Command("KILL", *launched);
+                (void)context.command("KILL", *launched);
             }
             state_->commands_ok = reg && query && marker && dynamic && start_time &&
                 stat_message && named && alias &&
                 monitor_get && *reg == *query && *marker == "available" &&
-                *dynamic == "value" && *named == ".probe_alias" &&
+                *dynamic == "value" && *named == "probe_alias" &&
                 *alias == *reg && *monitor_get == *reg &&
                 std::stoul(*start_time) > 0 && std::stoull(*stat_message) > 0;
         } else if (payload == "exit") {
-            (void)context.Command("EXIT");
+            (void)context.command("EXIT");
         } else if (payload == "abort") {
-            (void)context.Command("ABORT");
+            (void)context.command("ABORT");
         }
 
         {
@@ -121,7 +121,7 @@ private:
 class ExitDuringInitService final : public runtime::Service {
 public:
     bool init(runtime::Context& context, std::string_view) override {
-        (void)context.Command("EXIT");
+        (void)context.command("EXIT");
         return true;
     }
 
@@ -174,12 +174,12 @@ private:
     std::shared_ptr<ObserverState> state_;
 };
 
-int Fail(std::string_view message) {
+int fail(std::string_view message) {
     std::cerr << message << '\n';
     return EXIT_FAILURE;
 }
 
-bool WaitForMessages(
+bool wait_for_messages(
     const std::shared_ptr<ProbeState>& state,
     std::size_t count,
     std::chrono::milliseconds timeout = 5s
@@ -191,7 +191,7 @@ bool WaitForMessages(
 }
 
 template <class Predicate>
-bool WaitForMessage(
+bool wait_for_message(
     const std::shared_ptr<ProbeState>& state,
     Predicate predicate,
     std::chrono::milliseconds timeout = 5s
@@ -202,7 +202,7 @@ bool WaitForMessage(
     });
 }
 
-bool WaitForServiceCount(
+bool wait_for_service_count(
     runtime::Runtime& runtime,
     std::size_t count,
     std::chrono::milliseconds timeout = 5s
@@ -227,31 +227,31 @@ int main() {
         .profile = true,
     });
     if (!runtime.environment().set("marker", "available")) {
-        return Fail("failed to initialize runtime environment");
+        return fail("failed to initialize runtime environment");
     }
     if (!runtime.services().register_factory(
             "probe", [state] { return std::make_unique<ProbeService>(state); })) {
-        return Fail("failed to register probe service");
+        return fail("failed to register probe service");
     }
-    if (auto started = runtime.Start(); !started) {
-        return Fail(started.error().message());
+    if (auto started = runtime.start(); !started) {
+        return fail(started.error().message());
     }
 
-    auto launched = runtime.Launch("probe", "primary");
+    auto launched = runtime.launch("probe", "primary");
     if (!launched || *launched != 0x0100'0001U) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("failed to launch primary service with compatible handle");
+        runtime.request_stop();
+        runtime.join();
+        return fail("failed to launch primary service with compatible handle");
     }
-    if (!runtime.Name(*launched, ".probe") || runtime.Resolve(".probe") != *launched) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("service naming or lookup failed");
+    if (!runtime.name(*launched, ".probe") || runtime.resolve(".probe") != *launched) {
+        runtime.request_stop();
+        runtime.join();
+        return fail("service naming or lookup failed");
     }
 
     const auto send_text = [&](std::string_view text, int session) {
         const auto bytes = std::as_bytes(std::span(text.data(), text.size()));
-        return runtime.Send(
+        return runtime.send(
             *launched,
             0,
             static_cast<runtime::ProtocolType>(runtime::MessageType::lua),
@@ -259,9 +259,9 @@ int main() {
             bytes);
     };
     if (!send_text("exercise-commands", 1)) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("failed to send command exercise message");
+        runtime.request_stop();
+        runtime.join();
+        return fail("failed to send command exercise message");
     }
 
     constexpr int kProducerCount = 4;
@@ -280,13 +280,13 @@ int main() {
 
     constexpr std::size_t kExpectedMessages =
         2 + kProducerCount * kMessagesPerProducer;
-    if (!WaitForMessages(state, kExpectedMessages)) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("runtime did not dispatch all messages and timeout");
+    if (!wait_for_messages(state, kExpectedMessages)) {
+        runtime.request_stop();
+        runtime.join();
+        return fail("runtime did not dispatch all messages and timeout");
     }
 
-    const bool timeout_seen = WaitForMessage(
+    const bool timeout_seen = wait_for_message(
         state,
         [&](const auto& message) {
             return message.type == static_cast<runtime::ProtocolType>(
@@ -299,18 +299,39 @@ int main() {
         .type = 255,
         .data = {},
     };
-    if (!runtime.Send(*launched, std::move(arbitrary))) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("arbitrary protocol type was not dispatched");
+    if (!runtime.send(*launched, std::move(arbitrary))) {
+        runtime.request_stop();
+        runtime.join();
+        return fail("arbitrary protocol type was not dispatched");
     }
-    const bool protocol_255_seen = WaitForMessage(
+    const bool protocol_255_seen = wait_for_message(
         state,
         [](const auto& message) {
             return message.type == 255;
         });
 
-    if (!timeout_seen || !protocol_255_seen || !state->commands_ok ||
+    bool producer_order_ok = true;
+    {
+        std::lock_guard lock(state->mutex);
+        std::vector<int> next(kProducerCount, 0);
+        for (const auto& message : state->messages) {
+            const auto payload = message.string_payload();
+            if (!payload.starts_with("message-")) { continue; }
+            const int id = message.session - 100;
+            const int producer = id / kMessagesPerProducer;
+            const int index = id % kMessagesPerProducer;
+            if (producer < 0 || producer >= kProducerCount || next[producer]++ != index ||
+                payload != "message-" + std::to_string(producer) + "-" + std::to_string(index)) {
+                producer_order_ok = false;
+                break;
+            }
+        }
+        producer_order_ok = producer_order_ok && std::ranges::all_of(next, [](int count) {
+            return count == kMessagesPerProducer;
+        });
+    }
+
+    if (!timeout_seen || !protocol_255_seen || !producer_order_ok || !state->commands_ok ||
         state->signal_count.load() != 1 ||
         state->maximum_dispatches.load() != 1) {
         std::cerr << "timeout_seen=" << timeout_seen
@@ -319,27 +340,27 @@ int main() {
                   << " signal_count=" << state->signal_count.load()
                   << " maximum_dispatches=" << state->maximum_dispatches.load()
                   << '\n';
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("runtime compatibility or single-dispatch invariant failed");
+        runtime.request_stop();
+        runtime.join();
+        return fail("runtime compatibility or single-dispatch invariant failed");
     }
 
-    if (!send_text("exit", 9999) || !WaitForServiceCount(runtime, 0)) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("service EXIT did not retire the context");
+    if (!send_text("exit", 9999) || !wait_for_service_count(runtime, 0)) {
+        runtime.request_stop();
+        runtime.join();
+        return fail("service EXIT did not retire the context");
     }
 
     if (!runtime.services().register_factory(
             "exit_init", [] { return std::make_unique<ExitDuringInitService>(); })) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("failed to register exit-during-init service");
+        runtime.request_stop();
+        runtime.join();
+        return fail("failed to register exit-during-init service");
     }
-    if (runtime.Launch("exit_init") || runtime.service_count() != 0) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("service that exits during init must not remain registered");
+    if (runtime.launch("exit_init") || runtime.service_count() != 0) {
+        runtime.request_stop();
+        runtime.join();
+        return fail("service that exits during init must not remain registered");
     }
 
     auto blocking_state = std::make_shared<BlockingState>();
@@ -350,33 +371,33 @@ int main() {
         !runtime.services().register_factory(
             "observer",
             [observer_state] { return std::make_unique<ObserverService>(observer_state); })) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("failed to register drop-message test services");
+        runtime.request_stop();
+        runtime.join();
+        return fail("failed to register drop-message test services");
     }
-    auto observer = runtime.Launch("observer");
-    auto blocking = runtime.Launch("blocking");
+    auto observer = runtime.launch("observer");
+    auto blocking = runtime.launch("blocking");
     if (!observer || !blocking ||
-        !runtime.Send(*blocking, runtime::Message::Text(0, 0, "block"))) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("failed to launch drop-message test services");
+        !runtime.send(*blocking, runtime::Message::text(0, 0, "block"))) {
+        runtime.request_stop();
+        runtime.join();
+        return fail("failed to launch drop-message test services");
     }
     {
         std::unique_lock lock(blocking_state->mutex);
         if (!blocking_state->ready.wait_for(lock, 5s, [&] {
                 return blocking_state->started;
             })) {
-            runtime.RequestStop();
-            runtime.Join();
-            return Fail("blocking service did not enter dispatch");
+            runtime.request_stop();
+            runtime.join();
+            return fail("blocking service did not enter dispatch");
         }
     }
-    if (!runtime.Send(*blocking, runtime::Message::Text(*observer, 42, "pending")) ||
-        !runtime.Retire(*blocking)) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("failed to retire service with a pending message");
+    if (!runtime.send(*blocking, runtime::Message::text(*observer, 42, "pending")) ||
+        !runtime.retire(*blocking)) {
+        runtime.request_stop();
+        runtime.join();
+        return fail("failed to retire service with a pending message");
     }
     {
         std::lock_guard lock(blocking_state->mutex);
@@ -392,26 +413,26 @@ int main() {
                         message.session == 42;
                 });
             })) {
-            runtime.RequestStop();
-            runtime.Join();
-            return Fail("retired service did not report dropped request");
+            runtime.request_stop();
+            runtime.join();
+            return fail("retired service did not report dropped request");
         }
     }
-    (void)runtime.Retire(*observer);
+    (void)runtime.retire(*observer);
 
-    auto aborting = runtime.Launch("probe", "abort-target");
+    auto aborting = runtime.launch("probe", "abort-target");
     if (!aborting ||
-        !runtime.Send(*aborting, runtime::Message::Text(0, 0, "abort")) ||
-        !WaitForServiceCount(runtime, 0)) {
-        runtime.RequestStop();
-        runtime.Join();
-        return Fail("ABORT command did not retire all services");
+        !runtime.send(*aborting, runtime::Message::text(0, 0, "abort")) ||
+        !wait_for_service_count(runtime, 0)) {
+        runtime.request_stop();
+        runtime.join();
+        return fail("ABORT command did not retire all services");
     }
 
-    runtime.RequestStop();
-    runtime.Join();
+    runtime.request_stop();
+    runtime.join();
     if (runtime.running()) {
-        return Fail("runtime should be stopped after join");
+        return fail("runtime should be stopped after join");
     }
 
     auto delayed_factory = std::make_shared<BlockingState>();
@@ -427,13 +448,13 @@ int main() {
                 return std::make_unique<ProbeService>(
                     std::make_shared<ProbeState>());
             }) ||
-        !stopping_runtime.Start()) {
-        return Fail("failed to prepare launch-stop race test");
+        !stopping_runtime.start()) {
+        return fail("failed to prepare launch-stop race test");
     }
     std::atomic<bool> launch_succeeded{false};
     std::jthread launcher([&] {
         launch_succeeded.store(
-            stopping_runtime.Launch("delayed").has_value(),
+            stopping_runtime.launch("delayed").has_value(),
             std::memory_order_release);
     });
     bool factory_started = false;
@@ -443,20 +464,27 @@ int main() {
             return delayed_factory->started;
         });
     }
-    stopping_runtime.RequestStop();
+    stopping_runtime.request_stop();
+    std::atomic<bool> joined{false};
+    std::jthread joiner([&] {
+        stopping_runtime.join();
+        joined.store(true);
+    });
+    std::this_thread::sleep_for(5ms);
+    const bool joined_early = joined.load();
     {
         std::lock_guard lock(delayed_factory->mutex);
         delayed_factory->release = true;
     }
     delayed_factory->ready.notify_all();
     launcher.join();
-    stopping_runtime.Join();
+    joiner.join();
     if (!factory_started) {
-        return Fail("delayed factory did not start");
+        return fail("delayed factory did not start");
     }
-    if (launch_succeeded.load(std::memory_order_acquire) ||
+    if (joined_early || launch_succeeded.load(std::memory_order_acquire) ||
         stopping_runtime.service_count() != 0) {
-        return Fail("service escaped registration while runtime was stopping");
+        return fail("service escaped registration while runtime was stopping");
     }
     return EXIT_SUCCESS;
 }

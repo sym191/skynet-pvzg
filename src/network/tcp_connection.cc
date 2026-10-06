@@ -53,6 +53,14 @@ public:
             if (self->state_ == State::paused) {
                 self->state_ = State::connected;
             }
+            if (self->state_ == State::connected) {
+                if (!self->publish(Event{.type = EventType::open, .destination = new_owner,
+                        .socket = self->id_, .payload = {}, .text = self->started_ ? "transfer" : "start"})) {
+                    self->abort_close();
+                    return;
+                }
+                self->started_ = true;
+            }
             self->begin_read();
         });
     }
@@ -77,9 +85,10 @@ public:
         );
     }
 
-    void request_close(bool abort) override {
+    void request_close(bool abort, ServiceId expected_owner = 0) override {
         auto self = std::static_pointer_cast<TcpConnection>(shared_from_this());
-        asio::post(strand_, [self, abort] {
+        asio::post(strand_, [self, abort, expected_owner] {
+            if (expected_owner != 0 && self->owner_ != expected_owner) { return; }
             if (abort) {
                 self->abort_close();
             } else {
@@ -141,6 +150,7 @@ private:
                 strand_,
                 [self](const asio::error_code& error,
                        Tcp::resolver::results_type results) {
+                    if (self->state_ == State::closing || self->state_ == State::closed) { return; }
                     if (error) {
                         self->connect_timer_.cancel();
                         self->publish_error(
@@ -183,7 +193,8 @@ private:
         apply_common_options();
         state_ = State::connected;
         read_enabled_ = true;
-        publish(Event{
+        started_ = true;
+        if (!publish(Event{
             .type = EventType::open,
             .destination = owner_,
             .socket = id_,
@@ -192,7 +203,7 @@ private:
             .port = endpoint.port(),
             .payload = {},
             .text = endpoint_text(endpoint),
-        });
+        })) { abort_close(); return; }
         begin_read();
     }
 
@@ -250,7 +261,7 @@ private:
         }
 
         buffer->resize(size);
-        publish(Event{
+        if (!publish(Event{
             .type = EventType::data,
             .destination = owner_,
             .socket = id_,
@@ -259,7 +270,7 @@ private:
             .port = 0,
             .payload = std::move(*buffer),
             .text = {},
-        });
+        })) { abort_close(); return; }
 
         if (read_enabled_) {
             begin_read();
@@ -400,8 +411,9 @@ private:
         connect_timer_.cancel();
         high_queue_.clear();
         low_queue_.clear();
-        active_write_.reset();
-        queued_write_bytes_ = 0;
+        // Cancellation is asynchronous: keep the submitted bytes until completion.
+        if (!write_in_flight_) { active_write_.reset(); }
+        queued_write_bytes_ = active_write_ ? active_write_->size() : 0;
         finish_close(true);
     }
 
@@ -424,6 +436,7 @@ private:
     asio::steady_timer connect_timer_;
     Tcp::socket socket_;
     State state_{State::resolving};
+    bool started_{false};
     bool read_enabled_{false};
     bool read_in_flight_{false};
     bool write_in_flight_{false};

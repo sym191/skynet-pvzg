@@ -18,13 +18,13 @@
 namespace skynet::runtime {
 namespace {
 
-[[nodiscard]] std::string HandleAddress(Handle handle) {
+[[nodiscard]] std::string handle_address(Handle handle) {
     char buffer[16]{};
     std::snprintf(buffer, sizeof(buffer), ":%x", handle);
     return buffer;
 }
 
-[[nodiscard]] std::optional<Handle> ParseHandle(std::string_view address) {
+[[nodiscard]] std::optional<Handle> parse_handle(std::string_view address) {
     if (address.size() < 2 || address.front() != ':') {
         return std::nullopt;
     }
@@ -41,7 +41,7 @@ namespace {
     return handle;
 }
 
-[[nodiscard]] std::optional<std::uint32_t> ParseTicks(
+[[nodiscard]] std::optional<std::uint32_t> parse_ticks(
     std::optional<std::string_view> value
 ) {
     if (!value) {
@@ -61,7 +61,7 @@ struct CommandTarget {
     int signal{0};
 };
 
-[[nodiscard]] std::optional<CommandTarget> ParseSignalTarget(
+[[nodiscard]] std::optional<CommandTarget> parse_signal_target(
     std::string_view parameter
 ) {
     const auto separator = parameter.find_first_of(" \t");
@@ -85,7 +85,7 @@ struct CommandTarget {
     return CommandTarget{.address = address, .signal = signal};
 }
 
-[[nodiscard]] std::pair<std::string_view, std::string_view> SplitLaunch(
+[[nodiscard]] std::pair<std::string_view, std::string_view> split_launch(
     std::string_view parameter
 ) {
     const auto begin = parameter.find_first_not_of(" \t\r\n");
@@ -111,11 +111,17 @@ Runtime::Runtime(RuntimeOptions options)
     : options_(options), handles_(options.harbor_id) {}
 
 Runtime::~Runtime() {
-    RequestStop();
-    Join();
+    request_stop();
+    join();
 }
 
-std::expected<void, std::error_code> Runtime::Start() {
+Runtime::LaunchGuard::~LaunchGuard() {
+    std::lock_guard lock(runtime.lifecycle_mutex_);
+    --runtime.active_launches_;
+    runtime.lifecycle_ready_.notify_all();
+}
+
+std::expected<void, std::error_code> Runtime::start() {
     std::lock_guard lock(lifecycle_mutex_);
     const State current = state_.load(std::memory_order_acquire);
     if (current == State::running) {
@@ -128,73 +134,120 @@ std::expected<void, std::error_code> Runtime::Start() {
         return std::unexpected(make_error_code(RuntimeErrc::invalid_argument));
     }
 
-    if (!scheduler_.Start(options_.worker_count)) {
+    abort_requested_ = false;
+    abort_complete_ = false;
+    failed_.store(false);
+    bootstrap_handle_.store(0);
+    monitor_handle_.store(0, std::memory_order_release);
+    if (!scheduler_.start(options_.worker_count)) {
         return std::unexpected(make_error_code(RuntimeErrc::scheduler_start_failed));
     }
-    if (!timer_.Start([this](Handle destination, int session) {
+    if (!timer_.start([this](Handle destination, int session) {
             Message message{
                 .source = 0,
                 .session = session,
                 .type = static_cast<ProtocolType>(MessageType::response),
                 .data = {},
             };
-            (void)Send(destination, std::move(message));
+            (void)send(destination, std::move(message));
         })) {
-        scheduler_.RequestStop();
-        scheduler_.Join();
+        scheduler_.request_stop();
+        scheduler_.join();
         return std::unexpected(make_error_code(RuntimeErrc::timer_start_failed));
     }
 
     state_.store(State::running, std::memory_order_release);
     try {
         monitor_worker_ = std::jthread(
-            [this](std::stop_token token) { MonitorLoop(token); });
+            [this](std::stop_token token) { monitor_loop(token); });
     } catch (...) {
         state_.store(State::stopped, std::memory_order_release);
-        timer_.RequestStop();
-        timer_.Join();
-        scheduler_.RequestStop();
-        scheduler_.Join();
+        timer_.request_stop();
+        timer_.join();
+        scheduler_.request_stop();
+        scheduler_.join();
         return std::unexpected(
             make_error_code(RuntimeErrc::scheduler_start_failed));
     }
     return {};
 }
 
-void Runtime::RequestStop() noexcept {
+void Runtime::request_stop() noexcept {
     {
         std::lock_guard lock(lifecycle_mutex_);
         if (state_.load(std::memory_order_acquire) != State::running) {
             return;
         }
         state_.store(State::stopping, std::memory_order_release);
-        timer_.RequestStop();
+        stop_in_progress_ = true;
+        timer_.request_stop();
         if (monitor_worker_.joinable()) {
             monitor_worker_.request_stop();
         }
     }
     monitor_ready_.notify_all();
+    lifecycle_ready_.notify_all();
 
     auto contexts = handles_.retire_all();
     for (auto& context : contexts) {
-        (void)context->Deactivate();
+        (void)context->deactivate();
+        context->signal(0);
     }
-    scheduler_.RequestStop();
+    scheduler_.request_stop();
+    {
+        std::lock_guard lock(lifecycle_mutex_);
+        stop_in_progress_ = false;
+        lifecycle_ready_.notify_all();
+    }
 }
 
-void Runtime::Join() noexcept {
-    RequestStop();
-    timer_.Join();
+void Runtime::join() noexcept {
+    request_stop();
+    {
+        std::unique_lock lock(lifecycle_mutex_);
+        lifecycle_ready_.wait(lock, [this] { return !stop_in_progress_ && active_launches_ == 0; });
+    }
+    timer_.join();
     if (monitor_worker_.joinable()) {
         monitor_worker_.join();
     }
-    scheduler_.Join();
+    scheduler_.join();
+    // Retained services outlive every callback, including those retired by ABORT.
+    decltype(reserved_) reserved;
+    {
+        std::lock_guard lock(lifecycle_mutex_);
+        reserved.swap(reserved_);
+    }
+    reserved.clear();
+    {
+        std::lock_guard lock(global_mutex_);
+        pending_global_.clear();
+        global_names_.clear();
+    }
     std::lock_guard lock(lifecycle_mutex_);
     state_.store(State::stopped, std::memory_order_release);
 }
 
 bool Runtime::running() const noexcept {
     return state_.load(std::memory_order_acquire) == State::running;
+}
+
+void Runtime::wait() {
+    {
+        std::unique_lock lock(lifecycle_mutex_);
+        lifecycle_ready_.wait(lock, [this] {
+            return abort_complete_ || !running() || service_count_locked() == 0;
+        });
+    }
+    const auto logger = handles_.grab(resolve(".logger"));
+    if (logger && running()) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (logger->queue_length() != 0 && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    request_stop();
+    join();
 }
 
 ServiceRegistry& Runtime::services() noexcept {
@@ -209,13 +262,19 @@ const Environment& Runtime::environment() const noexcept {
     return environment_;
 }
 
-std::expected<Handle, std::error_code> Runtime::Launch(
+std::expected<Handle, std::error_code> Runtime::launch(
     std::string_view service_name,
-    std::string_view arguments
+    std::string_view arguments,
+    bool bootstrap
 ) {
-    if (!running()) {
-        return std::unexpected(make_error_code(RuntimeErrc::runtime_not_running));
+    {
+        std::lock_guard lock(lifecycle_mutex_);
+        if (!running() || abort_requested_) {
+            return std::unexpected(make_error_code(RuntimeErrc::runtime_not_running));
+        }
+        ++active_launches_;
     }
+    LaunchGuard launch_guard{*this};
     ServicePtr service;
     try {
         service = services_.create(service_name);
@@ -230,7 +289,7 @@ std::expected<Handle, std::error_code> Runtime::Launch(
     Handle handle = 0;
     {
         std::lock_guard lock(lifecycle_mutex_);
-        if (state_.load(std::memory_order_acquire) != State::running) {
+        if (state_.load(std::memory_order_acquire) != State::running || abort_requested_) {
             return std::unexpected(
                 make_error_code(RuntimeErrc::runtime_not_running));
         }
@@ -239,24 +298,23 @@ std::expected<Handle, std::error_code> Runtime::Launch(
     if (handle == 0) {
         return std::unexpected(make_error_code(RuntimeErrc::handle_exhausted));
     }
-    context->SetHandle(handle);
-
-    if (!context->Initialize(arguments)) {
+    if (!context->initialize(arguments)) {
         (void)handles_.retire(handle);
-        (void)context->Deactivate();
+        report_dropped_messages(handle, context->deactivate());
         return std::unexpected(make_error_code(RuntimeErrc::service_init_failed));
     }
     if (handles_.grab(handle) != context) {
-        (void)context->Deactivate();
+        (void)context->deactivate();
         return std::unexpected(make_error_code(RuntimeErrc::service_init_failed));
     }
-    if (context->Activate()) {
-        scheduler_.Schedule(context);
+    if (bootstrap) { bootstrap_handle_.store(handle, std::memory_order_release); }
+    if (context->activate()) {
+        scheduler_.schedule(context);
     }
     return handle;
 }
 
-bool Runtime::Retire(Handle handle) {
+bool Runtime::retire(Handle handle) {
     auto context = handles_.grab(handle);
     if (context == nullptr || !handles_.retire(handle)) {
         return false;
@@ -270,21 +328,49 @@ bool Runtime::Retire(Handle handle) {
             .type = static_cast<ProtocolType>(MessageType::client),
             .data = {},
         };
-        (void)Send(monitor, std::move(exit_message));
+        (void)send(monitor, std::move(exit_message));
     }
 
-    ReportDroppedMessages(handle, context->Deactivate());
+    report_dropped_messages(handle, context->deactivate());
+    if (Context::current() != context.get()) { context->signal(0); }
+    {
+        std::lock_guard lock(lifecycle_mutex_);
+        lifecycle_ready_.notify_all();
+    }
     return true;
 }
 
-void Runtime::AbortAll() {
+bool Runtime::reserve(Handle handle) {
+    std::lock_guard lock(lifecycle_mutex_);
+    auto context = handles_.grab(handle);
+    return context && reserved_.emplace(handle, std::move(context)).second;
+}
+
+void Runtime::abort_all() {
+    {
+        std::lock_guard lock(lifecycle_mutex_);
+        abort_requested_ = true;
+    }
+    const Handle logger = resolve(".logger");
     const auto handles = handles_.handles();
     for (const Handle handle : handles) {
-        (void)Retire(handle);
+        if (handle != logger) { (void)retire(handle); }
+    }
+    {
+        std::lock_guard lock(lifecycle_mutex_);
+        abort_complete_ = true;
+        lifecycle_ready_.notify_all();
     }
 }
 
-bool Runtime::Send(Handle destination, Message message) {
+void Runtime::initialization_failed(Handle handle) {
+    if (bootstrap_handle_.load(std::memory_order_acquire) == handle) {
+        failed_.store(true);
+        abort_all();
+    }
+}
+
+bool Runtime::send(Handle destination, Message message) {
     if (!running()) {
         return false;
     }
@@ -292,19 +378,19 @@ bool Runtime::Send(Handle destination, Message message) {
     if (context == nullptr) {
         return false;
     }
-    switch (context->Enqueue(std::move(message))) {
+    switch (context->enqueue(std::move(message))) {
     case EnqueueResult::rejected:
         return false;
     case EnqueueResult::queued:
         return true;
     case EnqueueResult::schedule:
-        scheduler_.Schedule(std::move(context));
+        scheduler_.schedule(std::move(context));
         return true;
     }
     return false;
 }
 
-bool Runtime::Send(
+bool Runtime::send(
     Handle destination,
     Handle source,
     ProtocolType type,
@@ -317,11 +403,11 @@ bool Runtime::Send(
         .type = type,
         .data = MessageBuffer(payload.begin(), payload.end()),
     };
-    return Send(destination, std::move(message));
+    return send(destination, std::move(message));
 }
 
-Handle Runtime::Resolve(std::string_view address) const {
-    if (const auto parsed = ParseHandle(address)) {
+Handle Runtime::resolve(std::string_view address) const {
+    if (const auto parsed = parse_handle(address)) {
         return *parsed;
     }
     if (!address.empty() && address.front() == '.') {
@@ -330,39 +416,59 @@ Handle Runtime::Resolve(std::string_view address) const {
     return 0;
 }
 
-bool Runtime::Name(Handle handle, std::string name) {
+bool Runtime::name(Handle handle, std::string name) {
     if (!name.empty() && name.front() == '.') {
         name.erase(name.begin());
     }
     return !name.empty() && handles_.name_handle(handle, std::move(name));
 }
 
-std::optional<std::string> Runtime::Command(
+bool Runtime::send_global(std::string_view name, Message message) {
+    if (name.empty() || name.size() >= 16) { return false; }
+    std::lock_guard lock(global_mutex_);
+    if (!running()) { return false; }
+    auto found = global_names_.find(std::string(name));
+    if (found != global_names_.end()) { return send(found->second, std::move(message)); }
+    pending_global_[std::string(name)].push_back(std::move(message));
+    return true;
+}
+
+void Runtime::register_global(std::string name, Handle handle) {
+    std::lock_guard lock(global_mutex_);
+    global_names_.insert_or_assign(name, handle);
+    if (auto found = pending_global_.find(name); found != pending_global_.end()) {
+        for (auto& message : found->second) { (void)send(handle, std::move(message)); }
+        pending_global_.erase(found);
+    }
+}
+
+std::optional<std::string> Runtime::command(
     Context& context,
     std::string_view command,
     std::optional<std::string_view> parameter
 ) {
     if (command == "TIMEOUT") {
-        const auto ticks = ParseTicks(parameter);
+        const auto ticks = parse_ticks(parameter);
         if (!ticks) {
             return std::nullopt;
         }
-        const int session = context.NewSession();
-        ScheduleTimeout(*ticks, context.handle(), session);
+        const int session = context.new_session();
+        schedule_timeout(*ticks, context.handle(), session);
         return std::to_string(session);
     }
     if (command == "REG") {
         if (!parameter || parameter->empty()) {
-            return HandleAddress(context.handle());
+            return handle_address(context.handle());
         }
-        return Name(context.handle(), std::string(*parameter))
-            ? std::optional<std::string>(std::string(*parameter))
+        return parameter->starts_with('.') && name(context.handle(), std::string(*parameter))
+            ? std::optional<std::string>(std::string(parameter->substr(1)))
             : std::nullopt;
     }
     if (command == "QUERY" && parameter) {
-        const Handle handle = Resolve(*parameter);
+        if (!parameter->starts_with('.')) { return std::nullopt; }
+        const Handle handle = resolve(*parameter);
         return handle == 0 ? std::nullopt :
-            std::optional<std::string>(HandleAddress(handle));
+            std::optional<std::string>(handle_address(handle));
     }
     if (command == "NAME" && parameter) {
         const auto separator = parameter->find_first_of(" \t");
@@ -374,29 +480,29 @@ std::optional<std::string> Runtime::Command(
         if (address_position == std::string_view::npos) {
             return std::nullopt;
         }
-        const Handle handle = Resolve(parameter->substr(address_position));
-        return handle != 0 && Name(handle, std::string(name))
-            ? std::optional<std::string>(std::string(name))
+        const Handle handle = parse_handle(parameter->substr(address_position)).value_or(0);
+        return name.starts_with('.') && handle != 0 && this->name(handle, std::string(name))
+            ? std::optional<std::string>(std::string(name.substr(1)))
             : std::nullopt;
     }
     if (command == "EXIT") {
-        (void)Retire(context.handle());
+        (void)retire(context.handle());
         return std::nullopt;
     }
     if (command == "KILL" && parameter) {
-        const Handle handle = Resolve(*parameter);
+        const Handle handle = resolve(*parameter);
         if (handle != 0) {
-            (void)Retire(handle);
+            (void)retire(handle);
         }
         return std::nullopt;
     }
     if (command == "LAUNCH" && parameter) {
-        const auto [service_name, arguments] = SplitLaunch(*parameter);
+        const auto [service_name, arguments] = split_launch(*parameter);
         if (service_name.empty()) {
             return std::nullopt;
         }
-        auto launched = Launch(service_name, arguments);
-        return launched ? std::optional<std::string>(HandleAddress(*launched)) :
+        auto launched = launch(service_name, arguments);
+        return launched ? std::optional<std::string>(handle_address(*launched)) :
             std::nullopt;
     }
     if (command == "GETENV" && parameter) {
@@ -412,19 +518,19 @@ std::optional<std::string> Runtime::Command(
         return std::nullopt;
     }
     if (command == "STARTTIME") {
-        return std::to_string(StartTime());
+        return std::to_string(start_time());
     }
     if (command == "ABORT") {
-        AbortAll();
+        abort_all();
         return std::nullopt;
     }
     if (command == "MONITOR") {
         if (!parameter || parameter->empty()) {
             const Handle monitor = monitor_handle_.load(std::memory_order_acquire);
             return monitor == 0 ? std::nullopt :
-                std::optional<std::string>(HandleAddress(monitor));
+                std::optional<std::string>(handle_address(monitor));
         }
-        monitor_handle_.store(Resolve(*parameter), std::memory_order_release);
+        monitor_handle_.store(resolve(*parameter), std::memory_order_release);
         return std::nullopt;
     }
     if (command == "STAT" && parameter) {
@@ -432,7 +538,7 @@ std::optional<std::string> Runtime::Command(
             return std::to_string(context.queue_length());
         }
         if (*parameter == "endless") {
-            return context.ConsumeEndless() ? "1" : "0";
+            return context.consume_endless() ? "1" : "0";
         }
         if (*parameter == "cpu") {
             return std::to_string(context.cpu_seconds());
@@ -446,17 +552,17 @@ std::optional<std::string> Runtime::Command(
         return std::string{};
     }
     if ((command == "LOGON" || command == "LOGOFF") && parameter) {
-        const Handle handle = Resolve(*parameter);
+        const Handle handle = resolve(*parameter);
         if (auto target = handles_.grab(handle)) {
             target->set_message_logging(command == "LOGON");
         }
         return std::nullopt;
     }
     if (command == "SIGNAL" && parameter) {
-        const auto target = ParseSignalTarget(*parameter);
+        const auto target = parse_signal_target(*parameter);
         if (target) {
-            if (auto service = handles_.grab(Resolve(target->address))) {
-                service->Signal(target->signal);
+            if (auto service = handles_.grab(resolve(target->address))) {
+                service->signal(target->signal);
             }
         }
         return std::nullopt;
@@ -464,20 +570,20 @@ std::optional<std::string> Runtime::Command(
     return std::nullopt;
 }
 
-void Runtime::ScheduleTimeout(
+void Runtime::schedule_timeout(
     std::uint32_t ticks,
     Handle destination,
     int session
 ) {
-    timer_.Schedule(ticks, destination, session);
+    timer_.schedule(ticks, destination, session);
 }
 
-std::uint64_t Runtime::NowTicks() const noexcept {
-    return timer_.NowTicks();
+std::uint64_t Runtime::now_ticks() const noexcept {
+    return timer_.now_ticks();
 }
 
-std::uint32_t Runtime::StartTime() const noexcept {
-    return timer_.StartTime();
+std::uint32_t Runtime::start_time() const noexcept {
+    return timer_.start_time();
 }
 
 bool Runtime::profile_enabled() const noexcept {
@@ -485,14 +591,25 @@ bool Runtime::profile_enabled() const noexcept {
 }
 
 std::size_t Runtime::service_count() const {
-    return handles_.size();
+    std::lock_guard lock(lifecycle_mutex_);
+    return service_count_locked();
 }
 
-void Runtime::Log(Handle source, std::string_view message) const {
+std::size_t Runtime::service_count_locked() const {
+    std::size_t count = 0;
+    for (const auto handle : handles_.handles()) {
+        if (!reserved_.contains(handle)) { ++count; }
+    }
+    return count;
+}
+
+void Runtime::log(Handle source, std::string_view message) {
+    const Handle logger = resolve(".logger");
+    if (logger != 0 && logger != source && send(logger, Message::text(source, 0, message))) { return; }
     spdlog::info("[:{:08x}] {}", source, message);
 }
 
-void Runtime::MonitorLoop(std::stop_token stop_token) noexcept {
+void Runtime::monitor_loop(std::stop_token stop_token) noexcept {
     std::unique_lock lock(monitor_mutex_);
     while (!stop_token.stop_requested()) {
         monitor_ready_.wait_for(lock, stop_token, std::chrono::seconds(1), [] {
@@ -506,14 +623,14 @@ void Runtime::MonitorLoop(std::stop_token stop_token) noexcept {
         lock.unlock();
         for (const Handle handle : handles) {
             if (auto context = handles_.grab(handle)) {
-                context->CheckEndless(now);
+                context->check_endless(now);
             }
         }
         lock.lock();
     }
 }
 
-void Runtime::ReportDroppedMessages(
+void Runtime::report_dropped_messages(
     Handle retired,
     std::vector<Message> messages
 ) {
@@ -528,7 +645,7 @@ void Runtime::ReportDroppedMessages(
             .type = static_cast<ProtocolType>(MessageType::error),
             .data = {},
         };
-        (void)Send(message.source, std::move(error));
+        (void)send(message.source, std::move(error));
     }
 }
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "OwnedBuffer.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -12,7 +14,7 @@ namespace skynet::runtime {
 
 using Handle = std::uint32_t;
 using ProtocolType = std::uint8_t;
-using MessageBuffer = std::vector<std::byte>;
+using MessageBuffer = OwnedBuffer;
 
 constexpr Handle kHandleMask = 0x00ff'ffffU;
 constexpr int kHandleRemoteShift = 24;
@@ -39,7 +41,7 @@ struct Message {
     ProtocolType type{static_cast<ProtocolType>(MessageType::text)};
     MessageBuffer data;
 
-    [[nodiscard]] static Message FromString(
+    [[nodiscard]] static Message from_string(
         Handle source_handle,
         int session_id,
         ProtocolType protocol,
@@ -56,19 +58,20 @@ struct Message {
         return message;
     }
 
-    [[nodiscard]] static Message Text(
+    [[nodiscard]] static Message text(
         Handle source_handle,
         int session_id,
         std::string_view payload
     ) {
-        return FromString(
+        return from_string(
             source_handle,
             session_id,
             static_cast<ProtocolType>(MessageType::text),
             payload);
     }
 
-    [[nodiscard]] std::string StringPayload() const {
+    [[nodiscard]] std::string string_payload() const {
+        if (data.empty()) { return {}; }
         return std::string(
             reinterpret_cast<const char*>(data.data()),
             data.size());

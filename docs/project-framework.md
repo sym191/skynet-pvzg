@@ -24,6 +24,14 @@ tools/build.sh all debug
 ctest --preset linux-debug
 ```
 
+## C++ 命名约定
+
+- 类、结构体、枚举类型和类型别名使用 `PascalCase`；构造函数和析构函数与类名一致。
+- 常量使用 `kPascalCase`，宏使用全大写加下划线。
+- 函数（包括成员函数）、变量和参数使用小写加下划线，例如 `is_remote`、`request_stop`。
+- 类成员变量使用小写加下划线并以 `_` 结尾，例如 `next_session_`。
+- 第三方库及其接口沿用上游命名。
+
 ## 专题文档
 
 - [Network 设计架构](network-architecture.md)

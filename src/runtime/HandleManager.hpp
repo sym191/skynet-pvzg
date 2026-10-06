@@ -31,6 +31,7 @@ public:
     [[nodiscard]] std::uint8_t harbor_id() const;
 
 private:
+    friend struct RuntimeTestAccess;
     [[nodiscard]] Handle make_handle(Handle local_id) const;
 
     mutable std::shared_mutex mutex_;

@@ -1,0 +1,11 @@
+harbor = 0
+thread = 4
+bootstrap = "snlua bootstrap"
+start = "stage3_main"
+logger = "@CMAKE_BINARY_DIR@/stage3-@STAGE3_VARIANT@.log"
+luaservice = "@PROJECT_SOURCE_DIR@/tests/lua/?.lua;@PROJECT_SOURCE_DIR@/third_party/skynet/service/?.lua"
+lua_path = "@PROJECT_SOURCE_DIR@/third_party/skynet/lualib/?.lua;@PROJECT_SOURCE_DIR@/third_party/skynet/lualib/?/init.lua"
+lualoader = "@PROJECT_SOURCE_DIR@/third_party/skynet/lualib/loader.lua"
+preload = "@PROJECT_SOURCE_DIR@/tests/lua/stage3_preload.lua"
+cpath = "@CMAKE_BINARY_DIR@/test-cservice/?.so;@STAGE3_CSERVICE@/?.so"
+lua_cpath = "@STAGE3_LUACLIB@/?.so"

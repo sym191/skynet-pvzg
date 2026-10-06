@@ -27,11 +27,11 @@ struct ConfigError {
     std::string message;
 };
 
-[[nodiscard]] std::expected<RuntimeConfig, ConfigError> LoadRuntimeConfig(
+[[nodiscard]] std::expected<RuntimeConfig, ConfigError> load_runtime_config(
     const std::filesystem::path& path
 );
 
-[[nodiscard]] std::optional<std::string_view> FindConfigValue(
+[[nodiscard]] std::optional<std::string_view> find_config_value(
     const RuntimeConfig& config,
     std::string_view key
 );

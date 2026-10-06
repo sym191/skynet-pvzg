@@ -68,6 +68,7 @@ add_subdirectory(src/network)
 add_subdirectory(src/lua)
 add_subdirectory(src/config)
 add_subdirectory(src/runtime)
+add_subdirectory(src/service)
 
 add_executable(skynet_refactor src/skynet_refactor/main.cc)
 target_link_libraries(skynet_refactor
@@ -76,13 +77,48 @@ target_link_libraries(skynet_refactor
         spdlog::spdlog
         skynet::config
         skynet::runtime
+        skynet::lua_service
 )
 set_target_properties(skynet_refactor PROPERTIES
+    ENABLE_EXPORTS ON
     OUTPUT_NAME skynet
     RUNTIME_OUTPUT_DIRECTORY "${SKPVZG_REFACTOR_BIN_DIR}"
 )
 
 enable_testing()
+
+add_library(skpvzg_native_probe MODULE tests/native_probe.c)
+target_include_directories(skpvzg_native_probe PRIVATE "${PROJECT_SOURCE_DIR}/third_party/skynet/skynet-src")
+set_target_properties(skpvzg_native_probe PROPERTIES PREFIX "" OUTPUT_NAME nativeprobe
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test-cservice")
+add_library(skpvzg_native_logger MODULE tests/native_logger.c)
+target_include_directories(skpvzg_native_logger PRIVATE "${PROJECT_SOURCE_DIR}/third_party/skynet/skynet-src")
+set_target_properties(skpvzg_native_logger PROPERTIES PREFIX "" OUTPUT_NAME nativelogger
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test-cservice")
+add_dependencies(skynet_refactor skpvzg_native_probe skpvzg_native_logger)
+
+foreach(STAGE3_VARIANT IN ITEMS original refactor)
+    set(STAGE3_CSERVICE "${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/cservice")
+    set(STAGE3_LUACLIB "${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/luaclib")
+    configure_file(tests/cmake/stage3_config.lua.in
+        "${SKPVZG_GENERATED_CONFIG_DIR}/stage3-${STAGE3_VARIANT}.lua" @ONLY)
+    add_test(NAME "lua.stage3.${STAGE3_VARIANT}" COMMAND "${CMAKE_COMMAND}"
+        "-DSKYNET=${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/bin/skynet"
+        "-DCONFIG=${SKPVZG_GENERATED_CONFIG_DIR}/stage3-${STAGE3_VARIANT}.lua"
+        -P "${PROJECT_SOURCE_DIR}/tests/cmake/run_stage3.cmake")
+    set_tests_properties("lua.stage3.${STAGE3_VARIANT}" PROPERTIES TIMEOUT 20)
+    add_test(NAME "lua.custom_logger.${STAGE3_VARIANT}" COMMAND "${CMAKE_COMMAND}"
+        "-DVARIANT=${STAGE3_VARIANT}"
+        "-DSKYNET=${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/bin/skynet"
+        "-DCONFIG=${SKPVZG_GENERATED_CONFIG_DIR}/stage3-${STAGE3_VARIANT}.lua"
+        -P "${PROJECT_SOURCE_DIR}/tests/cmake/run_custom_logger.cmake")
+    set_tests_properties("lua.custom_logger.${STAGE3_VARIANT}" PROPERTIES TIMEOUT 20)
+endforeach()
+add_test(NAME lua.bootstrap_failure COMMAND "${CMAKE_COMMAND}"
+    "-DSKYNET=$<TARGET_FILE:skynet_refactor>"
+    "-DCONFIG=${SKPVZG_GENERATED_CONFIG_DIR}/stage3-refactor.lua"
+    -P "${PROJECT_SOURCE_DIR}/tests/cmake/run_bootstrap_failure.cmake")
+set_tests_properties(lua.bootstrap_failure PROPERTIES TIMEOUT 10)
 
 add_executable(skpvzg_dependency_smoke tests/dependency_smoke_test.cc)
 target_link_libraries(skpvzg_dependency_smoke
@@ -112,6 +148,17 @@ add_test(NAME runtime.config COMMAND skpvzg_runtime_config_test)
 add_executable(skpvzg_runtime_core_test tests/runtime_core_test.cc)
 target_link_libraries(skpvzg_runtime_core_test PRIVATE skynet::runtime)
 add_test(NAME runtime.core COMMAND skpvzg_runtime_core_test)
+add_executable(skpvzg_runtime_boundary_test tests/runtime_boundary_test.cc)
+target_link_libraries(skpvzg_runtime_boundary_test PRIVATE skynet::runtime)
+add_test(NAME runtime.boundary COMMAND skpvzg_runtime_boundary_test)
+
+add_executable(skpvzg_runtime_contract_test tests/runtime_contract_test.cc)
+target_link_libraries(skpvzg_runtime_contract_test PRIVATE skynet::lua_service)
+add_test(NAME runtime.contract COMMAND skpvzg_runtime_contract_test)
+add_executable(skpvzg_network_runtime_test tests/network_runtime_test.cc)
+target_link_libraries(skpvzg_network_runtime_test PRIVATE skynet::network)
+add_test(NAME network.runtime COMMAND skpvzg_network_runtime_test)
+set_tests_properties(runtime.contract network.runtime PROPERTIES TIMEOUT 30)
 
 add_test(
     NAME configs.generated
@@ -138,5 +185,8 @@ add_custom_target(skpvzg_tests DEPENDS
     skpvzg_runtime_log_test
     skpvzg_runtime_config_test
     skpvzg_runtime_core_test
+    skpvzg_runtime_boundary_test
+    skpvzg_runtime_contract_test
+    skpvzg_network_runtime_test
 )
 add_custom_target(skynet_all DEPENDS skynet_refactor skynet_original skynet_network skpvzg_tests)

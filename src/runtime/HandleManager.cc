@@ -1,5 +1,7 @@
 #include "HandleManager.hpp"
 
+#include "Context.hpp"
+
 #include <mutex>
 #include <shared_mutex>
 #include <utility>
@@ -24,6 +26,8 @@ Handle HandleManager::register_context(const std::shared_ptr<Context>& context) 
         if (contexts_.contains(handle)) {
             continue;
         }
+        // Publish only after the immutable identity and mailbox owner are set.
+        context->set_handle(handle);
         contexts_.emplace(handle, context);
         return handle;
     }

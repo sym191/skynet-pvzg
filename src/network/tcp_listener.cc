@@ -30,6 +30,7 @@ public:
             }
             self->change_owner(new_owner);
             self->accept_enabled_ = true;
+            if (self->acceptor_.is_open() && !self->acknowledge_start()) { return; }
             self->begin_accept();
         });
     }
@@ -44,9 +45,10 @@ public:
     void request_send(Buffer, SendPriority) override {
     }
 
-    void request_close(bool) override {
+    void request_close(bool, ServiceId expected_owner = 0) override {
         auto self = std::static_pointer_cast<TcpListener>(shared_from_this());
-        asio::post(strand_, [self] {
+        asio::post(strand_, [self, expected_owner] {
+            if (expected_owner != 0 && self->owner_ != expected_owner) { return; }
             self->finish_close(true);
         });
     }
@@ -85,6 +87,7 @@ private:
                 strand_,
                 [self](const asio::error_code& error,
                        Tcp::resolver::results_type results) {
+                    if (self->closed_) { return; }
                     if (error || results.empty()) {
                         self->publish_error(
                             "listen resolve failed: " + error.message()
@@ -99,6 +102,7 @@ private:
     }
 
     void open_endpoint(const Tcp::endpoint& endpoint) {
+        if (closed_) { return; }
         asio::error_code error;
         acceptor_.open(endpoint.protocol(), error);
         if (!error && core_.config.reuse_address) {
@@ -117,7 +121,7 @@ private:
         }
 
         const auto local_endpoint = acceptor_.local_endpoint(error);
-        publish(Event{
+        if (!publish(Event{
             .type = EventType::open,
             .destination = owner_,
             .socket = id_,
@@ -128,11 +132,18 @@ private:
             ),
             .payload = {},
             .text = error ? std::string{} : endpoint_text(local_endpoint),
-        });
+        })) { finish_close(false); return; }
 
-        if (accept_enabled_) {
-            begin_accept();
+        if (accept_enabled_ && acknowledge_start()) { begin_accept(); }
+    }
+
+    bool acknowledge_start() {
+        if (!publish(Event{.type = EventType::open, .destination = owner_,
+                .socket = id_, .payload = {}, .text = "start"})) {
+            finish_close(false);
+            return false;
         }
+        return true;
     }
 
     void begin_accept() {
@@ -185,7 +196,7 @@ private:
                 connection->request_close(true);
                 publish_error("failed to install accepted socket");
             } else {
-                publish(Event{
+                if (!publish(Event{
                     .type = EventType::accept,
                     .destination = owner_,
                     .socket = id_,
@@ -198,7 +209,7 @@ private:
                     .text = endpoint_error
                         ? std::string{}
                         : endpoint_text(remote),
-                });
+                })) { connection->request_close(true); }
             }
         }
 

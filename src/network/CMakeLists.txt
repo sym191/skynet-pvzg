@@ -4,6 +4,7 @@ add_library(skynet_network STATIC
     tcp_connection.cc
     tcp_listener.cc
 )
+add_library(skynet::network ALIAS skynet_network)
 
 target_include_directories(skynet_network
     PUBLIC

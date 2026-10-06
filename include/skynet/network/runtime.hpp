@@ -89,6 +89,8 @@ public:
     Runtime(Runtime&&) = delete;
     Runtime& operator=(Runtime&&) = delete;
 
+    // start/join/destruction belong to the runtime owner thread. request_stop
+    // and socket operations may be called concurrently by producers.
     [[nodiscard]] std::expected<void, Error> start();
     void request_stop() noexcept;
     void join() noexcept;

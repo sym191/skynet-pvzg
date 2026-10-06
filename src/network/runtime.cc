@@ -3,6 +3,7 @@
 #include "detail.hpp"
 
 #include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <exception>
 #include <mutex>
@@ -137,6 +138,8 @@ public:
     detail::Core core;
 
     mutable std::mutex lifecycle_mutex;
+    std::condition_variable lifecycle_ready;
+    bool stop_in_progress{false};
     std::optional<WorkGuard> work_guard;
     std::vector<std::jthread> workers;
     std::atomic<State> state{State::stopped};
@@ -228,6 +231,7 @@ void Runtime::request_stop() noexcept {
         // Runtime shutdown intentionally suppresses late socket events. Normal
         // service-level closes should use close_socket/shutdown_socket before
         // stopping the whole runtime.
+        impl_->stop_in_progress = true;
         impl_->core.accepting_events.store(false, std::memory_order_release);
         sockets = impl_->core.directory.snapshot();
     }
@@ -244,6 +248,8 @@ void Runtime::request_stop() noexcept {
             impl_->work_guard->reset();
             impl_->work_guard.reset();
         }
+        impl_->stop_in_progress = false;
+        impl_->lifecycle_ready.notify_all();
     }
 }
 
@@ -252,7 +258,10 @@ void Runtime::join() noexcept {
 
     std::vector<std::jthread> workers;
     {
-        std::scoped_lock lock(impl_->lifecycle_mutex);
+        std::unique_lock lock(impl_->lifecycle_mutex);
+        impl_->lifecycle_ready.wait(lock, [this] {
+            return !impl_->stop_in_progress;
+        });
         workers.swap(impl_->workers);
     }
 
@@ -261,17 +270,8 @@ void Runtime::join() noexcept {
             continue;
         }
 
-        try {
-            if (worker.get_id() == std::this_thread::get_id()) {
-                // join() is intended for an external/runtime-owner thread.
-                // Detaching here avoids self-join termination in accidental use.
-                worker.detach();
-            } else {
-                worker.join();
-            }
-        } catch (...) {
-            // join() is noexcept at the public boundary.
-        }
+        // An owner-thread API: never detach handlers still referencing impl_.
+        worker.join();
     }
 
     {
@@ -431,6 +431,7 @@ std::expected<void, Error> Runtime::start_socket(
             "new socket owner cannot be zero"
         ));
     }
+    std::scoped_lock lock(impl_->lifecycle_mutex);
     if (auto ready = impl_->require_running(); !ready) {
         return ready;
     }
@@ -448,6 +449,7 @@ std::expected<void, Error> Runtime::pause_socket(
     ServiceId owner,
     SocketId socket
 ) {
+    std::scoped_lock lock(impl_->lifecycle_mutex);
     if (auto ready = impl_->require_running(); !ready) {
         return ready;
     }
@@ -467,6 +469,7 @@ std::expected<void, Error> Runtime::send(
     Buffer buffer,
     SendPriority priority
 ) {
+    std::scoped_lock lock(impl_->lifecycle_mutex);
     if (auto ready = impl_->require_running(); !ready) {
         return ready;
     }
@@ -507,6 +510,7 @@ std::expected<void, Error> Runtime::close_socket(
     ServiceId owner,
     SocketId socket
 ) {
+    std::scoped_lock lock(impl_->lifecycle_mutex);
     if (auto ready = impl_->require_running(); !ready) {
         return ready;
     }
@@ -524,6 +528,7 @@ std::expected<void, Error> Runtime::shutdown_socket(
     ServiceId owner,
     SocketId socket
 ) {
+    std::scoped_lock lock(impl_->lifecycle_mutex);
     if (auto ready = impl_->require_running(); !ready) {
         return ready;
     }
@@ -542,6 +547,7 @@ std::expected<void, Error> Runtime::set_nodelay(
     SocketId socket,
     bool enabled
 ) {
+    std::scoped_lock lock(impl_->lifecycle_mutex);
     if (auto ready = impl_->require_running(); !ready) {
         return ready;
     }
@@ -562,10 +568,14 @@ std::expected<void, Error> Runtime::set_nodelay(
 }
 
 void Runtime::close_all(ServiceId owner) noexcept {
+    std::scoped_lock lock(impl_->lifecycle_mutex);
+    if (!impl_->require_running()) {
+        return;
+    }
     const auto sockets = impl_->core.directory.snapshot();
     for (const auto& socket : sockets) {
         if (socket->owner_snapshot() == owner) {
-            socket->request_close(true);
+            socket->request_close(true, owner);
         }
     }
 }

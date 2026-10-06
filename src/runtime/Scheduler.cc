@@ -8,11 +8,11 @@
 namespace skynet::runtime {
 
 Scheduler::~Scheduler() {
-    RequestStop();
-    Join();
+    request_stop();
+    join();
 }
 
-bool Scheduler::Start(std::size_t worker_count) {
+bool Scheduler::start(std::size_t worker_count) {
     if (worker_count == 0) {
         return false;
     }
@@ -26,7 +26,7 @@ bool Scheduler::Start(std::size_t worker_count) {
         workers_.reserve(worker_count);
         for (std::size_t index = 0; index < worker_count; ++index) {
             workers_.emplace_back(
-                [this](std::stop_token token) { WorkerLoop(token); });
+                [this](std::stop_token token) { worker_loop(token); });
         }
     } catch (...) {
         for (auto& worker : workers_) {
@@ -40,13 +40,13 @@ bool Scheduler::Start(std::size_t worker_count) {
     return true;
 }
 
-void Scheduler::Schedule(std::shared_ptr<Context> context) {
+void Scheduler::schedule(std::shared_ptr<Context> context) {
     if (context != nullptr) {
         ready_queue_.push(std::move(context));
     }
 }
 
-void Scheduler::RequestStop() noexcept {
+void Scheduler::request_stop() noexcept {
     std::lock_guard lock(mutex_);
     for (auto& worker : workers_) {
         worker.request_stop();
@@ -55,7 +55,7 @@ void Scheduler::RequestStop() noexcept {
     ready_queue_.wake_all();
 }
 
-void Scheduler::Join() noexcept {
+void Scheduler::join() noexcept {
     std::vector<std::jthread> workers;
     {
         std::lock_guard lock(mutex_);
@@ -71,14 +71,14 @@ bool Scheduler::running() const noexcept {
     return running_;
 }
 
-void Scheduler::WorkerLoop(std::stop_token stop_token) noexcept {
+void Scheduler::worker_loop(std::stop_token stop_token) noexcept {
     while (!stop_token.stop_requested()) {
         auto context = ready_queue_.wait_pop(stop_token);
         if (context == nullptr) {
             continue;
         }
-        context->DispatchOne();
-        if (context->RescheduleAfterDispatch()) {
+        context->dispatch_one();
+        if (context->reschedule_after_dispatch()) {
             ready_queue_.push(std::move(context));
         }
     }

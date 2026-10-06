@@ -12,8 +12,8 @@ constexpr auto kTickDuration = std::chrono::milliseconds(10);
 }  // namespace
 
 TimerService::~TimerService() {
-    RequestStop();
-    Join();
+    request_stop();
+    join();
 }
 
 bool TimerService::LaterEvent::operator()(
@@ -26,7 +26,7 @@ bool TimerService::LaterEvent::operator()(
     return left.sequence > right.sequence;
 }
 
-bool TimerService::Start(Callback callback) {
+bool TimerService::start(Callback callback) {
     std::lock_guard lock(mutex_);
     if (running_ || !callback) {
         return running_;
@@ -42,7 +42,7 @@ bool TimerService::Start(Callback callback) {
     running_ = true;
     try {
         worker_ = std::jthread(
-            [this](std::stop_token token) { Run(token); });
+            [this](std::stop_token token) { run(token); });
     } catch (...) {
         running_ = false;
         callback_ = {};
@@ -51,7 +51,7 @@ bool TimerService::Start(Callback callback) {
     return true;
 }
 
-void TimerService::Schedule(
+void TimerService::schedule(
     std::uint32_t ticks,
     Handle destination,
     int session
@@ -81,7 +81,7 @@ void TimerService::Schedule(
     }
 }
 
-void TimerService::RequestStop() noexcept {
+void TimerService::request_stop() noexcept {
     {
         std::lock_guard lock(mutex_);
         running_ = false;
@@ -92,7 +92,7 @@ void TimerService::RequestStop() noexcept {
     ready_.notify_all();
 }
 
-void TimerService::Join() noexcept {
+void TimerService::join() noexcept {
     if (worker_.joinable()) {
         worker_.join();
     }
@@ -101,7 +101,7 @@ void TimerService::Join() noexcept {
     callback_ = {};
 }
 
-std::uint64_t TimerService::NowTicks() const noexcept {
+std::uint64_t TimerService::now_ticks() const noexcept {
     std::lock_guard lock(mutex_);
     if (steady_start_ == std::chrono::steady_clock::time_point{}) {
         return 0;
@@ -111,12 +111,12 @@ std::uint64_t TimerService::NowTicks() const noexcept {
             std::chrono::steady_clock::now() - steady_start_).count() / 10);
 }
 
-std::uint32_t TimerService::StartTime() const noexcept {
+std::uint32_t TimerService::start_time() const noexcept {
     std::lock_guard lock(mutex_);
     return wall_start_;
 }
 
-void TimerService::Run(std::stop_token stop_token) noexcept {
+void TimerService::run(std::stop_token stop_token) noexcept {
     std::unique_lock lock(mutex_);
     while (!stop_token.stop_requested()) {
         if (events_.empty()) {

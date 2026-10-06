@@ -71,7 +71,7 @@ public:
     virtual void request_start(ServiceId new_owner) = 0;
     virtual void request_pause() = 0;
     virtual void request_send(Buffer buffer, SendPriority priority) = 0;
-    virtual void request_close(bool abort) = 0;
+    virtual void request_close(bool abort, ServiceId expected_owner = 0) = 0;
     virtual void request_nodelay(bool enabled) = 0;
     virtual void request_udp_connect(Endpoint endpoint);
     virtual void request_udp_send(Buffer buffer, Endpoint endpoint);
