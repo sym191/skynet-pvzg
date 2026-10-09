@@ -35,6 +35,18 @@ struct RuntimeOptions {
     bool profile{true};
 };
 
+struct Monitor{
+    std::atomic<int> version{0};
+    std::uint32_t check_version{0};
+
+    Handle source{0};
+    Handle destination{0};
+
+    void trigger(Handle source, Handle destination);
+    bool check();
+
+};
+
 class Runtime final : private network::EventSink {
 public:
     explicit Runtime(RuntimeOptions options = {});
@@ -120,6 +132,7 @@ private:
     Scheduler scheduler_;
     TimerService timer_;
     std::atomic<State> state_{State::stopped};
+    Monitor monitor_;
     std::atomic<Handle> monitor_handle_{0};
     mutable std::mutex lifecycle_mutex_;
     std::mutex monitor_mutex_;

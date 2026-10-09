@@ -1,9 +1,11 @@
 #include "Runtime.hpp"
 
 #include "Context.hpp"
+#include "Message.hpp"
 #include "SocketEvent.hpp"
 #include "runtime_error.hpp"
 
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
@@ -107,6 +109,24 @@ struct CommandTarget {
 }
 
 }  // namespace
+
+void Monitor::trigger(Handle s, Handle d){
+    source = s;
+    destination = d;
+    version.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool Monitor::check(){
+    auto v = version.load(std::memory_order_relaxed);
+    if(v == check_version){
+        if(destination != 0){
+            return false;
+        }
+        return true;
+    }
+    check_version = v;
+    return true;
+}
 
 Runtime::Runtime(RuntimeOptions options)
     : network_(*this), options_(options), handles_(options.harbor_id) {}
@@ -637,21 +657,26 @@ void Runtime::log(Handle source, std::string_view message) {
 void Runtime::monitor_loop(std::stop_token stop_token) noexcept {
     std::unique_lock lock(monitor_mutex_);
     while (!stop_token.stop_requested()) {
-        monitor_ready_.wait_for(lock, stop_token, std::chrono::seconds(1), [] {
+        monitor_ready_.wait_for(lock, stop_token, std::chrono::seconds(options_.worker_count), [] {
             return false;
         });
         if (stop_token.stop_requested()) {
             break;
         }
-        const auto handles = handles_.handles();
-        const auto now = std::chrono::steady_clock::now();
-        lock.unlock();
-        for (const Handle handle : handles) {
-            if (auto context = handles_.grab(handle)) {
-                context->check_endless(now);
+        for(int i = 0; i < options_.worker_count; ++i){
+            if(!monitor_.check()){
+                auto context = handles_.grab(monitor_.destination);
             }
         }
-        lock.lock();
+        // const auto handles = handles_.handles();
+        // const auto now = std::chrono::steady_clock::now();
+        // lock.unlock();
+        // for (const Handle handle : handles) {
+        //     if (auto context = handles_.grab(handle)) {
+        //         context->check_endless(now);
+        //     }
+        // }
+        // lock.lock();
     }
 }
 

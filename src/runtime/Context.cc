@@ -5,6 +5,7 @@
 #include "ThreadClock.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <exception>
 #include <filesystem>
 #include <iomanip>
@@ -166,6 +167,8 @@ void Context::dispatch_one() noexcept {
         }
     }
 
+    
+
     try {
         service_->dispatch(*this, std::move(*message));
     } catch (const std::exception& error) {
@@ -303,18 +306,19 @@ bool Context::consume_endless() noexcept {
 }
 
 void Context::check_endless(std::chrono::steady_clock::time_point now) noexcept {
-    if (!dispatching_.load(std::memory_order_acquire)) {
-        return;
-    }
-    const auto started_ns = dispatch_started_ns_.load(std::memory_order_acquire);
-    if (started_ns == 0) {
-        return;
-    }
-    constexpr auto kEndlessThreshold = std::chrono::seconds(5);
-    if (steady_nanoseconds(now) - started_ns >= kEndlessThreshold.count() *
-            1'000'000'000LL) {
-        endless_.store(true, std::memory_order_release);
-    }
+    // if (!dispatching_.load(std::memory_order_acquire)) {
+    //     return;
+    // }
+    // const auto started_ns = dispatch_started_ns_.load(std::memory_order_acquire);
+    // if (started_ns == 0) {
+    //     return;
+    // }
+    // constexpr auto kEndlessThreshold = std::chrono::seconds(5);
+    // if (steady_nanoseconds(now) - started_ns >= kEndlessThreshold.count() *
+    //         1'000'000'000LL) {
+    //     endless_.store(true, std::memory_order_release);
+    // }
+    endless_.store(true, std::memory_order_release);
 }
 
 void Context::set_message_logging(bool enabled) noexcept {
