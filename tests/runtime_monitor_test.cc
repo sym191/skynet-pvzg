@@ -28,7 +28,6 @@ struct RuntimeTestAccess {
     }
     static void stop_monitor(Runtime& runtime) {
         runtime.monitor_worker_.request_stop();
-        runtime.monitor_ready_.notify_all();
         runtime.monitor_worker_.join();
     }
     static void check_workers(Runtime& runtime) {
@@ -193,11 +192,23 @@ void run() {
     runtime.request_stop();
     runtime.join();
 }
+
+void check_stop_latency() {
+    rt::Runtime runtime({.worker_count = 8, .harbor_id = 0});
+    check(runtime.start().has_value(), "stop-latency runtime start");
+    std::this_thread::sleep_for(50ms);
+    const auto started = std::chrono::steady_clock::now();
+    runtime.request_stop();
+    runtime.join();
+    check(std::chrono::steady_clock::now() - started < 2s,
+          "stopping waited for the full worker-count scan interval");
+}
 }  // namespace
 
 int main() {
     try {
         run();
+        check_stop_latency();
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

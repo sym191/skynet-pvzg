@@ -201,7 +201,6 @@ void Runtime::request_stop() noexcept {
             monitor_worker_.request_stop();
         }
     }
-    monitor_ready_.notify_all();
     lifecycle_ready_.notify_all();
 
     auto contexts = handles_.retire_all();
@@ -668,19 +667,18 @@ void Runtime::check(std::size_t worker_index) {
 }
 
 void Runtime::monitor_loop(std::stop_token stop_token) noexcept {
-    std::unique_lock lock(monitor_mutex_);
     while (!stop_token.stop_requested()) {
-        monitor_ready_.wait_for(lock, stop_token, std::chrono::seconds(options_.worker_count), [] {
-            return false;
-        });
+        // Sleep in one-second steps so stopping need not wait a full scan interval.
+        for (std::size_t elapsed = 0;
+             elapsed < options_.worker_count && !stop_token.stop_requested(); ++elapsed) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
         if (stop_token.stop_requested()) {
             break;
         }
-        lock.unlock();
         for (std::size_t index = 0; index < options_.worker_count; ++index) {
             check(index);
         }
-        lock.lock();
     }
 }
 

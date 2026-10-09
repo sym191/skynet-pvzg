@@ -138,8 +138,6 @@ private:
     std::unique_ptr<Monitor[]> monitors_;
     std::atomic<Handle> monitor_handle_{0};
     mutable std::mutex lifecycle_mutex_;
-    std::mutex monitor_mutex_;
-    std::condition_variable_any monitor_ready_;
     std::jthread monitor_worker_;
     std::condition_variable lifecycle_ready_;
     bool abort_requested_{false};
