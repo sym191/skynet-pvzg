@@ -26,7 +26,7 @@ bool Scheduler::start(std::size_t worker_count) {
         workers_.reserve(worker_count);
         for (std::size_t index = 0; index < worker_count; ++index) {
             workers_.emplace_back(
-                [this](std::stop_token token) { worker_loop(token); });
+                [this, index](std::stop_token token) { worker_loop(token, index); });
         }
     } catch (...) {
         for (auto& worker : workers_) {
@@ -71,13 +71,13 @@ bool Scheduler::running() const noexcept {
     return running_;
 }
 
-void Scheduler::worker_loop(std::stop_token stop_token) noexcept {
+void Scheduler::worker_loop(std::stop_token stop_token, std::size_t worker_index) noexcept {
     while (!stop_token.stop_requested()) {
         auto context = ready_queue_.wait_pop(stop_token);
         if (context == nullptr) {
             continue;
         }
-        context->dispatch_one();
+        context->dispatch_one(worker_index);
         if (context->reschedule_after_dispatch()) {
             ready_queue_.push(std::move(context));
         }

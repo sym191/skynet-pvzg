@@ -5,7 +5,7 @@
 #include "Service.hpp"
 
 #include <atomic>
-#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <mutex>
@@ -51,7 +51,7 @@ public:
     [[nodiscard]] bool active() const noexcept;
 
     [[nodiscard]] EnqueueResult enqueue(Message message);
-    void dispatch_one() noexcept;
+    void dispatch_one(std::size_t worker_index) noexcept;
     [[nodiscard]] bool reschedule_after_dispatch();
 
     [[nodiscard]] int new_session() noexcept;
@@ -86,7 +86,7 @@ public:
     [[nodiscard]] double cpu_seconds() const noexcept;
     [[nodiscard]] double current_dispatch_seconds() const noexcept;
     [[nodiscard]] bool consume_endless() noexcept;
-    void check_endless(std::chrono::steady_clock::time_point now) noexcept;
+    void mark_endless() noexcept;
 
     void set_message_logging(bool enabled) noexcept;
     [[nodiscard]] bool message_logging() const noexcept;
@@ -103,12 +103,10 @@ private:
     std::atomic<bool> accepting_{true};
     std::atomic<bool> active_{false};
     std::atomic<bool> initialized_{false};
-    std::atomic<bool> dispatching_{false};
     std::atomic<bool> endless_{false};
     std::atomic<bool> message_logging_{false};
     std::atomic<std::uint64_t> message_count_{0};
     std::atomic<std::uint64_t> cpu_microseconds_{0};
-    std::atomic<std::int64_t> dispatch_started_ns_{0};
     std::atomic<std::uint64_t> dispatch_cpu_started_us_{0};
     NativeCallback callback_{nullptr};
     void* callback_userdata_{nullptr};

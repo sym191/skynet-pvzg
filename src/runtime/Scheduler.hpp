@@ -27,7 +27,7 @@ public:
     [[nodiscard]] bool running() const noexcept;
 
 private:
-    void worker_loop(std::stop_token stop_token) noexcept;
+    void worker_loop(std::stop_token stop_token, std::size_t worker_index) noexcept;
 
     GlobalQueue ready_queue_;
     mutable std::mutex mutex_;

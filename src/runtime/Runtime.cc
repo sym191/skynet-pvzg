@@ -1,11 +1,9 @@
 #include "Runtime.hpp"
 
 #include "Context.hpp"
-#include "Message.hpp"
 #include "SocketEvent.hpp"
 #include "runtime_error.hpp"
 
-#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <chrono>
@@ -110,24 +108,6 @@ struct CommandTarget {
 
 }  // namespace
 
-void Monitor::trigger(Handle s, Handle d){
-    source = s;
-    destination = d;
-    version.fetch_add(1, std::memory_order_relaxed);
-}
-
-bool Monitor::check(){
-    auto v = version.load(std::memory_order_relaxed);
-    if(v == check_version){
-        if(destination != 0){
-            return false;
-        }
-        return true;
-    }
-    check_version = v;
-    return true;
-}
-
 Runtime::Runtime(RuntimeOptions options)
     : network_(*this), options_(options), handles_(options.harbor_id) {}
 
@@ -153,6 +133,12 @@ std::expected<void, std::error_code> Runtime::start() {
     }
     if (options_.worker_count == 0) {
         return std::unexpected(make_error_code(RuntimeErrc::invalid_argument));
+    }
+
+    try {
+        monitors_ = std::make_unique<Monitor[]>(options_.worker_count);
+    } catch (...) {
+        return std::unexpected(make_error_code(RuntimeErrc::scheduler_start_failed));
     }
 
     abort_requested_ = false;
@@ -654,6 +640,33 @@ void Runtime::log(Handle source, std::string_view message) {
     spdlog::info("[:{:08x}] {}", source, message);
 }
 
+void Runtime::trigger(std::size_t worker_index, Handle source, Handle destination) noexcept {
+    auto& monitor = monitors_[worker_index];
+    monitor.source = source;
+    monitor.destination = destination;
+    monitor.version.fetch_add(1, std::memory_order_relaxed);
+}
+
+void Runtime::check(std::size_t worker_index) {
+    auto& monitor = monitors_[worker_index];
+    const auto version = static_cast<std::uint32_t>(
+        monitor.version.load(std::memory_order_relaxed));
+    if (version != monitor.check_version) {
+        monitor.check_version = version;
+        return;
+    }
+    const auto source = monitor.source;
+    const auto destination = monitor.destination;
+    if (destination != 0) {
+        if (auto context = handles_.grab(destination)) {
+            context->mark_endless();
+        }
+        log(0, "error: A message from [ " + handle_address(source) + " ] to [ " +
+            handle_address(destination) + " ] maybe in an endless loop (worker = " +
+            std::to_string(worker_index) + ", version = " + std::to_string(version) + ")");
+    }
+}
+
 void Runtime::monitor_loop(std::stop_token stop_token) noexcept {
     std::unique_lock lock(monitor_mutex_);
     while (!stop_token.stop_requested()) {
@@ -663,20 +676,11 @@ void Runtime::monitor_loop(std::stop_token stop_token) noexcept {
         if (stop_token.stop_requested()) {
             break;
         }
-        for(int i = 0; i < options_.worker_count; ++i){
-            if(!monitor_.check()){
-                auto context = handles_.grab(monitor_.destination);
-            }
+        lock.unlock();
+        for (std::size_t index = 0; index < options_.worker_count; ++index) {
+            check(index);
         }
-        // const auto handles = handles_.handles();
-        // const auto now = std::chrono::steady_clock::now();
-        // lock.unlock();
-        // for (const Handle handle : handles) {
-        //     if (auto context = handles_.grab(handle)) {
-        //         context->check_endless(now);
-        //     }
-        // }
-        // lock.lock();
+        lock.lock();
     }
 }
 

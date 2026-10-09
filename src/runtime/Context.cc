@@ -5,7 +5,6 @@
 #include "ThreadClock.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <exception>
 #include <filesystem>
 #include <iomanip>
@@ -20,13 +19,6 @@ struct CurrentGuard {
     explicit CurrentGuard(Context* context) : previous(std::exchange(current_context, context)) {}
     ~CurrentGuard() { current_context = previous; }
 };
-
-[[nodiscard]] std::int64_t steady_nanoseconds(
-    std::chrono::steady_clock::time_point time
-) {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-        time.time_since_epoch()).count();
-}
 
 }  // namespace
 
@@ -132,7 +124,7 @@ EnqueueResult Context::enqueue(Message message) {
     return schedule ? EnqueueResult::schedule : EnqueueResult::queued;
 }
 
-void Context::dispatch_one() noexcept {
+void Context::dispatch_one(std::size_t worker_index) noexcept {
     CurrentGuard guard(this);
     if (!active_.load(std::memory_order_acquire)) {
         return;
@@ -142,11 +134,8 @@ void Context::dispatch_one() noexcept {
         return;
     }
 
-    const auto started = std::chrono::steady_clock::now();
     const auto cpu_started = thread_microseconds();
     dispatch_cpu_started_us_.store(cpu_started, std::memory_order_release);
-    dispatch_started_ns_.store(steady_nanoseconds(started), std::memory_order_release);
-    dispatching_.store(true, std::memory_order_release);
     message_count_.fetch_add(1, std::memory_order_relaxed);
 
     if (const std::size_t overload = queue_.take_overload(); overload != 0) {
@@ -167,8 +156,7 @@ void Context::dispatch_one() noexcept {
         }
     }
 
-    
-
+    runtime_.trigger(worker_index, message->source, handle_);
     try {
         service_->dispatch(*this, std::move(*message));
     } catch (const std::exception& error) {
@@ -176,12 +164,11 @@ void Context::dispatch_one() noexcept {
     } catch (...) {
         log("service dispatch threw an unknown exception");
     }
+    runtime_.trigger(worker_index, 0, 0);
 
     if (runtime_.profile_enabled()) {
         cpu_microseconds_.fetch_add(thread_microseconds() - cpu_started, std::memory_order_relaxed);
     }
-    dispatching_.store(false, std::memory_order_release);
-    dispatch_started_ns_.store(0, std::memory_order_release);
     dispatch_cpu_started_us_.store(0, std::memory_order_release);
 }
 
@@ -305,19 +292,7 @@ bool Context::consume_endless() noexcept {
     return endless_.exchange(false, std::memory_order_acq_rel);
 }
 
-void Context::check_endless(std::chrono::steady_clock::time_point now) noexcept {
-    // if (!dispatching_.load(std::memory_order_acquire)) {
-    //     return;
-    // }
-    // const auto started_ns = dispatch_started_ns_.load(std::memory_order_acquire);
-    // if (started_ns == 0) {
-    //     return;
-    // }
-    // constexpr auto kEndlessThreshold = std::chrono::seconds(5);
-    // if (steady_nanoseconds(now) - started_ns >= kEndlessThreshold.count() *
-    //         1'000'000'000LL) {
-    //     endless_.store(true, std::memory_order_release);
-    // }
+void Context::mark_endless() noexcept {
     endless_.store(true, std::memory_order_release);
 }
 

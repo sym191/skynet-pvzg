@@ -16,6 +16,7 @@
 #include <expected>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -35,16 +36,11 @@ struct RuntimeOptions {
     bool profile{true};
 };
 
-struct Monitor{
-    std::atomic<int> version{0};
+struct Monitor {
+    alignas(std::hardware_destructive_interference_size) std::atomic<int> version{0};
     std::uint32_t check_version{0};
-
     Handle source{0};
     Handle destination{0};
-
-    void trigger(Handle source, Handle destination);
-    bool check();
-
 };
 
 class Runtime final : private network::EventSink {
@@ -107,7 +103,13 @@ public:
 
     void log(Handle source, std::string_view message);
 
+    // Only worker_index's worker may call this, during a started Runtime.
+    // Call before dispatch with the message handles, and after dispatch with zeros.
+    void trigger(std::size_t worker_index, Handle source, Handle destination) noexcept;
+
 private:
+    friend struct RuntimeTestAccess;
+
     struct LaunchGuard {
         Runtime& runtime;
         ~LaunchGuard();
@@ -120,6 +122,7 @@ private:
 
     bool publish(network::Event&& event) noexcept override;
     bool owner_alive(network::ServiceId owner) const noexcept override;
+    void check(std::size_t worker_index);
     void monitor_loop(std::stop_token stop_token) noexcept;
     std::size_t service_count_locked() const;
     void report_dropped_messages(Handle retired, std::vector<Message> messages);
@@ -132,7 +135,7 @@ private:
     Scheduler scheduler_;
     TimerService timer_;
     std::atomic<State> state_{State::stopped};
-    Monitor monitor_;
+    std::unique_ptr<Monitor[]> monitors_;
     std::atomic<Handle> monitor_handle_{0};
     mutable std::mutex lifecycle_mutex_;
     std::mutex monitor_mutex_;

@@ -159,6 +159,11 @@ add_executable(skpvzg_runtime_boundary_test tests/runtime_boundary_test.cc)
 target_link_libraries(skpvzg_runtime_boundary_test PRIVATE skynet::runtime)
 add_test(NAME runtime.boundary COMMAND skpvzg_runtime_boundary_test)
 
+add_executable(skpvzg_runtime_monitor_test tests/runtime_monitor_test.cc)
+target_link_libraries(skpvzg_runtime_monitor_test PRIVATE skynet::runtime)
+add_test(NAME runtime.monitor COMMAND skpvzg_runtime_monitor_test)
+set_tests_properties(runtime.monitor PROPERTIES TIMEOUT 20)
+
 add_executable(skpvzg_runtime_contract_test tests/runtime_contract_test.cc)
 target_link_libraries(skpvzg_runtime_contract_test PRIVATE skynet::lua_service)
 add_test(NAME runtime.contract COMMAND skpvzg_runtime_contract_test)
@@ -197,6 +202,7 @@ add_custom_target(skpvzg_tests DEPENDS
     skpvzg_runtime_config_test
     skpvzg_runtime_core_test
     skpvzg_runtime_boundary_test
+    skpvzg_runtime_monitor_test
     skpvzg_runtime_contract_test
     skpvzg_network_runtime_test
     skpvzg_runtime_socket_test
