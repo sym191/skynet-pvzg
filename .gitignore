@@ -12,3 +12,7 @@ logs/
 .DS_Store
 .idea/
 .vscode/
+
+# Shared protocol checkout and local server state
+/pvz-global/
+/var/

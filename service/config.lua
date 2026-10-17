@@ -1,0 +1,14 @@
+thread = 4
+harbor = 0
+bootstrap = "snlua bootstrap"
+start = "main"
+root = "$TEAM_REPO_ROOT/third_party/skynet/"
+luaservice = "$TEAM_REPO_ROOT/service/?.lua;" .. root .. "service/?.lua"
+lualoader = root .. "lualib/loader.lua"
+lua_path = "$TEAM_REPO_ROOT/service/?.lua;" .. root .. "lualib/?.lua;" .. root .. "lualib/?/init.lua"
+lua_cpath = "$TEAM_BUILD_ROOT/luaclib/?.so"
+cpath = "$TEAM_BUILD_ROOT/cservice/?.so"
+team_state_path = "$TEAM_STATE_PATH"
+team_invite_ttl = "$TEAM_INVITE_TTL"
+team_battle_service = "$TEAM_BATTLE_SERVICE"
+team_policy_module = "$TEAM_POLICY_MODULE"
