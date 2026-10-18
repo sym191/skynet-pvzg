@@ -1,0 +1,25 @@
+root = "@PROJECT_SOURCE_DIR@/third_party/skynet/"
+thread = 2
+logger = nil
+harbor = 0
+bootstrap = "snlua bootstrap"
+start = "team_test_main"
+
+team_invite_ttl_seconds = "60"
+team_invite_permission = "all"
+team_leader_succession = "online_first"
+team_battle_service = "team_battle"
+
+luaservice = "@SKPVZG_SHARED_LUA_ROOT@/service/?.lua;" ..
+    "@PROJECT_SOURCE_DIR@/tests/team/?.lua;" ..
+    root .. "service/?.lua;" ..
+    root .. "test/?.lua"
+lualoader = root .. "lualib/loader.lua"
+lua_path = "@SKPVZG_SHARED_LUA_ROOT@/lualib/?.lua;" ..
+    "@SKPVZG_SHARED_LUA_ROOT@/lualib/?/init.lua;" ..
+    "@PROJECT_SOURCE_DIR@/tests/team/?.lua;" ..
+    root .. "lualib/?.lua;" ..
+    root .. "lualib/?/init.lua"
+lua_cpath = "@SKPVZG_ORIGINAL_LUACLIB_DIR@/?.so"
+snax = root .. "examples/?.lua"
+cpath = "@SKPVZG_ORIGINAL_CSERVICE_DIR@/?.so"

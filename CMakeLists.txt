@@ -56,6 +56,11 @@ configure_file(
     "${SKPVZG_GENERATED_CONFIG_DIR}/skynet_refactor.lua"
     @ONLY
 )
+configure_file(
+    "${PROJECT_SOURCE_DIR}/configs/skynet_team_test.lua.in"
+    "${SKPVZG_GENERATED_CONFIG_DIR}/skynet_team_test.lua"
+    @ONLY
+)
 
 add_original_skynet_target(
     ROOT_DIR "${PROJECT_SOURCE_DIR}/third_party/skynet"
@@ -80,6 +85,8 @@ set_target_properties(skynet_refactor PROPERTIES
 )
 
 enable_testing()
+
+find_program(SKPVZG_LUA_EXECUTABLE NAMES lua lua5.4 lua5.3)
 
 add_executable(skpvzg_dependency_smoke tests/dependency_smoke_test.cc)
 target_link_libraries(skpvzg_dependency_smoke
@@ -116,6 +123,25 @@ add_test(
         "-DORIGINAL_CSERVICE=${SKPVZG_ORIGINAL_CSERVICE_DIR}/logger.so"
         "-DORIGINAL_LUACLIB=${SKPVZG_ORIGINAL_LUACLIB_DIR}/skynet.so"
         -P "${PROJECT_SOURCE_DIR}/tests/cmake/check_original_outputs.cmake"
+)
+
+if(SKPVZG_LUA_EXECUTABLE)
+    add_test(
+        NAME team.unit
+        COMMAND
+            "${SKPVZG_LUA_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/team/unit_test.lua"
+            "${PROJECT_SOURCE_DIR}"
+    )
+endif()
+
+add_test(
+    NAME team.integration
+    COMMAND
+        "${CMAKE_COMMAND}"
+        "-DTEAM_TEST_SKYNET=${SKPVZG_ORIGINAL_BIN_DIR}/skynet"
+        "-DTEAM_TEST_CONFIG=${SKPVZG_GENERATED_CONFIG_DIR}/skynet_team_test.lua"
+        -P "${PROJECT_SOURCE_DIR}/tests/cmake/run_team_integration.cmake"
 )
 
 add_custom_target(skpvzg_tests DEPENDS skpvzg_dependency_smoke skpvzg_runtime_log_test)

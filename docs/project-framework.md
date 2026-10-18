@@ -27,3 +27,4 @@ ctest --preset linux-debug
 ## 专题文档
 
 - [Network 设计架构](network-architecture.md)
+- [原版 skynet Team 模块](team-module.md)

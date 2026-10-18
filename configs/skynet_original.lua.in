@@ -5,6 +5,11 @@ harbor = 0
 bootstrap = "snlua bootstrap"
 start = "main"
 
+team_invite_ttl_seconds = "60"
+team_invite_permission = "all"
+team_leader_succession = "online_first"
+team_battle_service = "team_battle"
+
 luaservice = "@SKPVZG_SHARED_LUA_ROOT@/service/?.lua;" ..
     root .. "service/?.lua;" ..
     root .. "test/?.lua;" ..

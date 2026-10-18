@@ -1,6 +1,8 @@
 local skynet = require "skynet"
+require "skynet.manager"
 
 skynet.start(function()
-    skynet.error("skynet-pvzg shared Lua bootstrap")
-    skynet.exit()
+    skynet.uniqueservice("team_battle")
+    skynet.uniqueservice("team")
+    skynet.error("skynet-pvzg team services started")
 end)
