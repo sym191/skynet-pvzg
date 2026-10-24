@@ -4,12 +4,13 @@
 
 `skynet_network` 是基于 standalone Asio 的 C++23 静态库，公开入口在
 `include/skynet/network/runtime.hpp`。当前可用能力是 TCP 监听、出站连接、
-异步收发、暂停/恢复读、优雅关闭和强制关闭。UDP 相关类型与 API 已预留，
-但 `Runtime::udp_bind`、`Runtime::udp_connect`、`Runtime::udp_send` 当前返回
-未实现错误，不应被业务依赖。
+异步收发、暂停/恢复读、优雅关闭和强制关闭，以及 IPv4 UDP、借用 FD 流和 socket 信息快照。
+UDP 支持空报文、65507 字节最大负载和默认目标；UDP IPv6 暂缓。
+阶段五的接口、FD 所有权及 C gate 验收见 [阶段五交付](stage5-network.md)。
 
 网络层不直接调用业务对象。所有 socket 事件通过 `EventSink::publish(Event&&)`
-上报给 runtime owner，由上层决定如何路由到服务或 app。
+上报给 Actor Runtime，转换为协议类型 6 的消息，经 worker 串行派发。
+TCP 的阶段四接口与验收边界见 [阶段四交付](stage4-tcp.md)。
 
 ## 架构分层
 
@@ -39,8 +40,8 @@ flowchart TB
     Sink --> App
 ```
 
-- `Runtime`：唯一公开门面，负责生命周期、参数校验、socket owner 校验和
-  socket 操作转发。
+- `Runtime`：唯一公开门面，负责生命周期、参数校验、owner 存活校验和
+  socket 操作转发；send/close/pause/nodelay 与原版一样允许跨服务调用。
 - `Runtime::Impl`：持有 `asio::io_context`、work guard、worker thread、
   lifecycle mutex 与运行状态。
 - `Core`：网络内部共享上下文，保存配置、事件出口和 socket directory。
@@ -98,6 +99,7 @@ sequenceDiagram
     Listener->>Sink: EventType::open
     App->>Runtime: start_socket(owner, listener_id)
     Runtime->>IO: request_start()
+    Listener->>Sink: EventType::open (start-ready)
     IO->>Listener: async_accept()
     IO->>Listener: accepted Tcp::socket
     Listener->>Directory: reserve accepted id
@@ -117,6 +119,7 @@ sequenceDiagram
 
     App->>Runtime: start_socket(owner, socket_id)
     Runtime->>IO: request_start()
+    Conn->>Sink: EventType::open (start / transfer)
     IO->>Conn: async_read_some()
     IO->>Conn: bytes received
     Conn->>Sink: EventType::data
@@ -129,8 +132,8 @@ sequenceDiagram
 
     App->>Runtime: close_socket(owner, socket_id)
     Runtime->>IO: request_close(false)
+    Conn->>Sink: EventType::close (wake reader)
     IO->>Conn: drain queue then close
-    Conn->>Sink: EventType::close
     Conn->>Conn: unregister from directory
 ```
 
@@ -157,30 +160,40 @@ sequenceDiagram
 
 ## 事件语义
 
-- `open`：listener 成功监听，或 outbound connection 建连成功。
+- `open`：listener 成功监听、start-ready、accepted socket 首次 start、owner transfer
+  或 outbound connection 建连成功。listener 初次事件将端口同时放入 value/port。
 - `accept`：listener 接收到新 TCP 连接，`accepted_socket` 是新连接 id。
-- `data`：TCP connection 收到数据，`payload` 保存本次读取内容。
-- `warning`：connection 发送队列超过 `Config::write_warning_bytes`。
+- `data`：TCP connection 或 FD 流收到数据，`payload` 保存本次读取内容。
+- `udp`：一个完整 IPv4 报文，允许空负载；`text/port` 是来源地址和端口。
+- `warning`：connection 发送队列超过 `Config::write_warning_bytes`，value 单位是 KiB；
+  队列归零后发布 value=0 重置通知。
 - `error`：异步操作失败或参数相关错误，错误文本在 `Event::text`。
-- `close`：socket 已关闭且已从 directory 移除。runtime 整体停止时会关闭 socket，
-  但会关闭事件出口以抑制停止过程中的后续事件。
+- `close`：读端关闭通知，每个 socket 至多一次。对端 EOF 后写端仍可用；
+  graceful close 先唤醒 Lua，再排空写队列并移除 directory。shutdown 则立即取消。
+  runtime 整体停止时关闭事件出口，排空取消回调并 join I/O 线程。
 
 ## 维护细则
 
-- 所有 socket 内部状态只能在各自 strand 上修改。公开 API 只做校验和投递，
-  不直接操作 Asio socket。
+- socket 发布到 directory 后，内部状态只能在各自 strand 上修改。UDP/FD 的
+  同步 open/assign 在发布前完成；公开收发和控制 API 只做校验、预算保留与投递。
 - `EventSink::publish` 必须是非阻塞、`noexcept` 语义友好的实现；需要复杂逻辑时，
   先把事件入队，再由业务线程消费。
-- 新增公开 API 时必须在 `Runtime` 做 owner、运行态和 socket kind 校验，错误用
+- 新增公开 API 时必须在 `Runtime` 按操作定义做 owner 存活、运行态和 socket kind 校验，错误用
   `std::expected` 返回，不新增异常式控制流。
 - `SocketDirectory::reserve()` 与 `install()` 是两阶段流程。失败路径必须调用
   `erase()` 释放已预留 id。
 - `close_socket()` 表示尽量排空发送队列后关闭；`shutdown_socket()` 与
   runtime 停止路径表示强制关闭。
-- 发送队列需要维护 `queued_write_bytes_` 与 warning/hard limit。任何新增发送路径
-  都必须复用同一套限流语义。
+- 发送队列同时维护 strand 内的 `queued_write_bytes_` 和原子的 `pending_write_bytes_`。
+  hard limit 在 post 前保留额度，覆盖 executor 闭包、队列与 in-flight buffer；
+  high priority 不打断已提交的低优先级写。取消完成前保留 buffer。
+- 服务退休的 close_all 对所有 socket 投递带 expected_owner 的关闭请求，在 strand 内
+  判断归属，避免未执行 transfer 的 owner 快照竞态。start/transfer 也在 strand 内检查
+  owner_alive，阻止已退休服务接管 socket。
 - 不要从业务线程直接持有或暴露 `detail::*` 类型；`detail` 命名空间只服务网络库内部。
-- UDP API 在实现完成前只能作为保留接口记录在文档和错误处理中，测试和 app 不应使用。
+- UDP 的 IPv4 地址 blob 与上游一致；IPv6 blob 暂不支持。绑定 FD 的调用者继续持有
+  原始 FD，网络库只关闭副本；两个 FD 共享 O_NONBLOCK 和同一个数据流。
+- info 在 socket strand 生成快照，与 Actor 共用统计时钟。不得从 EventSink 回调调用。
 
 ## 验证要求
 

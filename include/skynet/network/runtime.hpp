@@ -40,6 +40,11 @@ class EventSink {
 public:
     virtual ~EventSink() = default;
     virtual bool publish(Event&& event) noexcept = 0;
+    // Checked on socket strands before ownership transfers. Standalone sinks
+    // may accept arbitrary service ids; actor sinks reject retired services.
+    virtual bool owner_alive(ServiceId) const noexcept { return true; }
+    // Actor sinks supply skynet.now()'s clock for socket statistics.
+    virtual std::uint64_t now_ticks() const noexcept;
 };
 
 enum class ErrorCode : std::uint8_t {
@@ -79,6 +84,18 @@ struct Config {
     bool keep_alive{true};
 };
 
+enum class SocketType : std::uint8_t { unknown, listen, tcp, udp, bound, closing };
+
+struct SocketInfo {
+    SocketId id{};
+    SocketType type{};
+    ServiceId owner{};
+    std::uint64_t read{}, written{}, read_time{}, write_time{};
+    std::size_t queued_bytes{};
+    bool reading{}, writing{};
+    std::string name;
+};
+
 class Runtime final {
 public:
     explicit Runtime(EventSink& sink, Config config = {});
@@ -89,12 +106,16 @@ public:
     Runtime(Runtime&&) = delete;
     Runtime& operator=(Runtime&&) = delete;
 
+    // start/join/destruction belong to the runtime owner thread. request_stop
+    // and socket operations may be called concurrently by producers.
     [[nodiscard]] std::expected<void, Error> start();
     void request_stop() noexcept;
     void join() noexcept;
 
     [[nodiscard]] bool running() const noexcept;
 
+    // Returns after bind/listen succeeds; the listen-ready event is already
+    // queued. Must not be called from an I/O worker/EventSink callback.
     [[nodiscard]] std::expected<SocketId, Error> listen(
         ServiceId owner,
         std::string host,
@@ -167,6 +188,11 @@ public:
         bool enabled = true
     );
 
+    // Duplicates fd; the caller retains ownership and must not consume data
+    // concurrently. O_NONBLOCK is shared with the original open description.
+    [[nodiscard]] std::expected<SocketId, Error> bind_fd(ServiceId owner, int fd);
+    // Owner/actor threads only, like listen(); never from an EventSink callback.
+    [[nodiscard]] std::vector<SocketInfo> info();
     void close_all(ServiceId owner) noexcept;
 
 private:

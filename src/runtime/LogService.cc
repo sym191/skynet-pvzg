@@ -29,7 +29,7 @@ std::expected<std::unique_ptr<LogService>, std::error_code> LogService::create(
         std::vector<spdlog::sink_ptr> sinks;
         sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
         sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(
-                config.file_path.string(), true));
+                config.file_path.string(), false));
 
         auto logger = std::make_shared<spdlog::logger>(
                 "skynet", sinks.begin(), sinks.end());
@@ -47,6 +47,8 @@ std::expected<std::unique_ptr<LogService>, std::error_code> LogService::create(
 LogService::LogService(std::shared_ptr<spdlog::logger> logger)
         : logger_(std::move(logger)) {}
 
+LogService::~LogService() { if (logger_) { logger_->flush(); } }
+
 bool LogService::init(Context& context, std::string_view args) {
     (void)context;
     if (!args.empty()) {
@@ -61,7 +63,7 @@ void LogService::dispatch(Context& context, Message msg) {
         return;
     }
     logger_->info("[source={:08x} session={}] {}", msg.source, msg.session,
-        msg.text_payload());
+        msg.string_payload());
 }
 
 void LogService::signal(Context& context, int signal) {

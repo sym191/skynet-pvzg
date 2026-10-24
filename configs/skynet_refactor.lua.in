@@ -1,10 +1,16 @@
 root = "@PROJECT_SOURCE_DIR@/"
 lua_root = "@SKPVZG_SHARED_LUA_ROOT@"
 thread = 8
+harbor = 0
+bootstrap = "snlua bootstrap"
 logfile = "@SKPVZG_REFACTOR_OUTPUT_DIR@/skynet.log"
 start = "main"
 
-luaservice = lua_root .. "/service/?.lua;" .. lua_root .. "/examples/?.lua"
-lua_path = lua_root .. "/lualib/?.lua;" .. lua_root .. "/lualib/?/init.lua"
+luaservice = lua_root .. "/service/?.lua;" .. lua_root .. "/examples/?.lua;" .. root .. "third_party/skynet/service/?.lua"
+lualoader = root .. "third_party/skynet/lualib/loader.lua"
+lua_path = lua_root .. "/lualib/?.lua;" .. lua_root .. "/lualib/?/init.lua;" .. root .. "third_party/skynet/lualib/?.lua;" .. root .. "third_party/skynet/lualib/?/init.lua"
 lua_cpath = "@SKPVZG_REFACTOR_OUTPUT_DIR@/luaclib/?.so"
 cpath = "@SKPVZG_REFACTOR_OUTPUT_DIR@/cservice/?.so"
+team_state_path = "@SKPVZG_REFACTOR_OUTPUT_DIR@/team-state.json"
+team_invite_ttl = 60
+team_policy_module = "team.policy"

@@ -9,13 +9,15 @@
 namespace skynet::runtime {
 
 class Environment {
- public:
-  [[nodiscard]] bool set(std::string key, std::string value);
-  [[nodiscard]] std::optional<std::string> get(std::string_view key) const;
+public:
+    [[nodiscard]] bool set(std::string key, std::string value);
+    [[nodiscard]] std::optional<std::string> get(std::string_view key) const;
+    [[nodiscard]] bool contains(std::string_view key) const;
+    [[nodiscard]] std::unordered_map<std::string, std::string> snapshot() const;
 
- private:
-  mutable std::mutex mutex_{};
-  std::unordered_map<std::string, std::string> values_{};
+private:
+    mutable std::mutex mutex_;
+    std::unordered_map<std::string, std::string> values_;
 };
 
 }  // namespace skynet::runtime

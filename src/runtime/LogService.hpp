@@ -20,6 +20,7 @@ struct LogServiceConfig {
 class LogService final : public Service {
 public:
     explicit LogService(std::shared_ptr<spdlog::logger> logger);
+    ~LogService() override;
 
     [[nodiscard]] static std::expected<std::unique_ptr<LogService>, std::error_code>
     create(LogServiceConfig config = {});

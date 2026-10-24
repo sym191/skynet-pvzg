@@ -10,6 +10,15 @@ enum class RuntimeErrc {
     config_open_failed,
     invalid_config_string,
     logger_creation_failed,
+    invalid_argument,
+    runtime_not_running,
+    runtime_stopping,
+    scheduler_start_failed,
+    timer_start_failed,
+    network_start_failed,
+    service_not_found,
+    service_init_failed,
+    handle_exhausted,
 };
 
 [[nodiscard]] const std::error_category& runtime_error_category() noexcept;

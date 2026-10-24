@@ -1,71 +1,98 @@
 #include "MessageQueue.hpp"
-#include "Message.hpp"
 
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <vector>
 
-namespace skynet::runtime{
+namespace skynet::runtime {
 
-MessageQueue::MessageQueue(Handle owner): owner_(owner){}
+namespace {
 
+constexpr std::size_t kInitialOverloadThreshold = 1024;
 
-void MessageQueue::set_owner(Handle owner){
+}  // namespace
+
+MessageQueue::MessageQueue(Handle owner) : owner_(owner) {}
+
+Handle MessageQueue::owner() const {
+    std::lock_guard<std::mutex> guard{mutex_};
+    return owner_;
+}
+
+void MessageQueue::set_owner(Handle owner) {
     std::lock_guard<std::mutex> guard{mutex_};
     owner_ = owner;
 }
 
-bool MessageQueue::push(Message msg){
+bool MessageQueue::push(Message message) {
     std::lock_guard<std::mutex> guard{mutex_};
-    queue_.push_back(std::move(msg));
-    if(!scheduled_){
+    queue_.push_back(std::move(message));
+    if (queue_.size() > overload_threshold_) {
+        overload_ = queue_.size();
+        overload_threshold_ *= 2;
+    }
+    if (!scheduled_) {
         scheduled_ = true;
-        return true; // Needs to be added to global queue
+        return true;
     }
     return false;
 }
 
-std::optional<Message> MessageQueue::pop(){
+std::optional<Message> MessageQueue::pop() {
     std::lock_guard<std::mutex> guard{mutex_};
-    if(queue_.empty()){
+    if (queue_.empty()) {
         scheduled_ = false;
+        overload_ = 0;
+        overload_threshold_ = kInitialOverloadThreshold;
         return std::nullopt;
     }
-    Message msg = std::move(queue_.front());
+    Message message = std::move(queue_.front());
     queue_.pop_front();
-    return msg;
+    return message;
 }
 
-bool MessageQueue::reschedule_after_dispatch(){
+bool MessageQueue::reschedule_after_dispatch() {
     std::lock_guard<std::mutex> guard{mutex_};
-    if(queue_.empty()){
+    if (queue_.empty()) {
         scheduled_ = false;
-        return false; // no more message to consume
+        overload_ = 0;
+        overload_threshold_ = kInitialOverloadThreshold;
+        return false;
     }
     return true;
 }
 
-std::size_t MessageQueue::length() const{
+std::size_t MessageQueue::length() const {
     std::lock_guard<std::mutex> guard{mutex_};
     return queue_.size();
 }
 
-void MessageQueue::clear(){
+std::size_t MessageQueue::take_overload() {
+    std::lock_guard<std::mutex> guard{mutex_};
+    return std::exchange(overload_, 0);
+}
+
+void MessageQueue::clear() {
     std::lock_guard<std::mutex> guard{mutex_};
     queue_.clear();
     scheduled_ = false;
+    overload_ = 0;
+    overload_threshold_ = kInitialOverloadThreshold;
 }
 
-std::vector<Message> MessageQueue::drain(){
-    std::vector<Message> msgs;
-    std::lock_guard<std::mutex> guard(mutex_);
-    msgs.reserve(queue_.size());
-    while(!queue_.empty()){
-        msgs.push_back(std::move(queue_.front()));
+std::vector<Message> MessageQueue::drain() {
+    std::vector<Message> messages;
+    std::lock_guard<std::mutex> guard{mutex_};
+    messages.reserve(queue_.size());
+    while (!queue_.empty()) {
+        messages.push_back(std::move(queue_.front()));
         queue_.pop_front();
     }
     scheduled_ = false;
-    return msgs;
+    overload_ = 0;
+    overload_threshold_ = kInitialOverloadThreshold;
+    return messages;
 }
 
-} // skynet::runtime
+}  // namespace skynet::runtime

@@ -1,5 +1,7 @@
 #include "HandleManager.hpp"
 
+#include "Context.hpp"
+
 #include <mutex>
 #include <shared_mutex>
 #include <utility>
@@ -10,6 +12,9 @@ namespace skynet::runtime {
 HandleManager::HandleManager(std::uint8_t harbor_id) : harbor_id_(harbor_id) {}
 
 Handle HandleManager::register_context(const std::shared_ptr<Context>& context) {
+    if (context == nullptr) {
+        return 0;
+    }
     std::unique_lock<std::shared_mutex> lock(mutex_);
     for (Handle i = 0; i < kHandleMask; ++i) {
         Handle local = next_local_id_;
@@ -21,6 +26,8 @@ Handle HandleManager::register_context(const std::shared_ptr<Context>& context) 
         if (contexts_.contains(handle)) {
             continue;
         }
+        // Publish only after the immutable identity and mailbox owner are set.
+        context->set_handle(handle);
         contexts_.emplace(handle, context);
         return handle;
     }
@@ -41,6 +48,11 @@ std::shared_ptr<Context> HandleManager::grab(Handle handle) const {
     return it->second;
 }
 
+bool HandleManager::contains(Handle handle) const {
+    std::shared_lock lock(mutex_);
+    return contexts_.contains(handle);
+}
+
 bool HandleManager::retire(Handle handle) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     const bool erased = contexts_.erase(handle) > 0;
@@ -56,9 +68,22 @@ bool HandleManager::retire(Handle handle) {
     return erased;
 }
 
+std::vector<std::shared_ptr<Context>> HandleManager::retire_all() {
+    std::vector<std::shared_ptr<Context>> contexts;
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    contexts.reserve(contexts_.size());
+    for (auto& [handle, context] : contexts_) {
+        (void)handle;
+        contexts.push_back(std::move(context));
+    }
+    contexts_.clear();
+    names_.clear();
+    return contexts;
+}
+
 bool HandleManager::name_handle(Handle handle, std::string name) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
-    if (!contexts_.contains(handle) || names_.contains(name)) {
+    if (name.empty() || !contexts_.contains(handle) || names_.contains(name)) {
         return false;
     }
     names_.emplace(std::move(name), handle);
@@ -83,6 +108,11 @@ std::vector<Handle> HandleManager::handles() const {
         res.push_back(handle);
     }
     return res;
+}
+
+std::size_t HandleManager::size() const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    return contexts_.size();
 }
 
 std::uint8_t HandleManager::harbor_id() const {

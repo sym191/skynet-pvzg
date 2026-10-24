@@ -1,0 +1,60 @@
+#pragma once
+
+#include "Message.hpp"
+
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <functional>
+#include <mutex>
+#include <queue>
+#include <thread>
+#include <vector>
+
+namespace skynet::runtime {
+
+class TimerService final {
+public:
+    using Callback = std::function<void(Handle, int)>;
+
+    TimerService() = default;
+    ~TimerService();
+
+    TimerService(const TimerService&) = delete;
+    TimerService& operator=(const TimerService&) = delete;
+
+    [[nodiscard]] bool start(Callback callback);
+    void schedule(std::uint32_t ticks, Handle destination, int session);
+    void request_stop() noexcept;
+    void join() noexcept;
+
+    [[nodiscard]] std::uint64_t now_ticks() const noexcept;
+    [[nodiscard]] std::uint32_t start_time() const noexcept;
+
+private:
+    struct Event {
+        std::chrono::steady_clock::time_point deadline;
+        std::uint64_t sequence;
+        Handle destination;
+        int session;
+    };
+
+    struct LaterEvent {
+        bool operator()(const Event& left, const Event& right) const noexcept;
+    };
+
+    void run(std::stop_token stop_token) noexcept;
+
+    mutable std::mutex mutex_;
+    std::condition_variable_any ready_;
+    std::priority_queue<Event, std::vector<Event>, LaterEvent> events_;
+    Callback callback_;
+    std::jthread worker_;
+    std::chrono::steady_clock::time_point steady_start_{};
+    std::uint32_t wall_start_{0};
+    std::uint32_t initial_ticks_{0};
+    std::uint64_t next_sequence_{0};
+    bool running_{false};
+};
+
+}  // namespace skynet::runtime

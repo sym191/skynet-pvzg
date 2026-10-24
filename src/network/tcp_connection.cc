@@ -27,7 +27,8 @@ public:
           resolver_(strand_),
           connect_timer_(strand_),
           socket_(std::move(socket)),
-          state_(State::paused) {
+          state_(State::paused),
+          accepting_writes_(true) {
         apply_common_options();
     }
 
@@ -48,10 +49,22 @@ public:
                 self->state_ == State::closing) {
                 return;
             }
+            if (!self->core_.sink.owner_alive(new_owner)) {
+                self->abort_close();
+                return;
+            }
             self->change_owner(new_owner);
             self->read_enabled_ = true;
             if (self->state_ == State::paused) {
                 self->state_ = State::connected;
+            }
+            if (self->state_ == State::connected) {
+                if (!self->publish(Event{.type = EventType::open, .destination = new_owner,
+                        .socket = self->id_, .payload = {}, .text = self->started_ ? "transfer" : "start"})) {
+                    self->abort_close();
+                    return;
+                }
+                self->started_ = true;
             }
             self->begin_read();
         });
@@ -67,19 +80,43 @@ public:
         });
     }
 
-    void request_send(Buffer buffer, SendPriority priority) override {
-        auto self = std::static_pointer_cast<TcpConnection>(shared_from_this());
-        asio::post(
-            strand_,
-            [self, buffer = std::move(buffer), priority]() mutable {
-                self->enqueue_send(std::move(buffer), priority);
+    std::expected<void, Error> request_send(Buffer buffer, SendPriority priority) override {
+        if (!accepting_writes_.load(std::memory_order_acquire)) {
+            return std::unexpected(Error{ErrorCode::invalid_socket, "socket is closing"});
+        }
+        const auto size = buffer.size();
+        auto pending = pending_write_bytes_.load(std::memory_order_relaxed);
+        while (true) {
+            if (size > core_.config.write_hard_limit - pending) {
+                if (accepting_writes_.exchange(false, std::memory_order_acq_rel)) {
+                    auto self = std::static_pointer_cast<TcpConnection>(shared_from_this());
+                    asio::post(strand_, [self] {
+                        self->publish_error("send queue hard limit exceeded");
+                        self->abort_close();
+                    });
+                }
+                return std::unexpected(Error{ErrorCode::socket_limit_reached, "send queue hard limit exceeded"});
             }
-        );
+            if (pending_write_bytes_.compare_exchange_weak(pending, pending + size)) { break; }
+        }
+        // Reserve before post: executor closures count against the same budget
+        // as queued and in-flight writes. An abort keeps submitted bytes alive.
+        try {
+            auto self = std::static_pointer_cast<TcpConnection>(shared_from_this());
+            asio::post(strand_, [self, buffer = std::move(buffer), priority]() mutable {
+                self->enqueue_send(std::move(buffer), priority);
+            });
+        } catch (...) {
+            pending_write_bytes_.fetch_sub(size);
+            return std::unexpected(Error{ErrorCode::invalid_argument, "failed to queue send"});
+        }
+        return {};
     }
 
-    void request_close(bool abort) override {
+    void request_close(bool abort, ServiceId expected_owner = 0) override {
         auto self = std::static_pointer_cast<TcpConnection>(shared_from_this());
-        asio::post(strand_, [self, abort] {
+        asio::post(strand_, [self, abort, expected_owner] {
+            if (expected_owner != 0 && self->owner_ != expected_owner) { return; }
             if (abort) {
                 self->abort_close();
             } else {
@@ -105,6 +142,19 @@ public:
     }
 
 private:
+    SocketInfo socket_info() override {
+        auto type = SocketType::unknown;
+        if (started_ && (state_ == State::connected || state_ == State::paused)) { type = SocketType::tcp; }
+        if (state_ == State::closing || (read_eof_ && state_ != State::closed)) { type = SocketType::closing; }
+        auto result = statistics(type);
+        result.queued_bytes = pending_write_bytes_.load();
+        result.reading = read_enabled_;
+        result.writing = write_in_flight_;
+        asio::error_code error;
+        auto remote = socket_.remote_endpoint(error);
+        if (!error) { result.name = endpoint_text(remote); }
+        return result;
+    }
     enum class State : std::uint8_t {
         resolving,
         connecting,
@@ -141,6 +191,7 @@ private:
                 strand_,
                 [self](const asio::error_code& error,
                        Tcp::resolver::results_type results) {
+                    if (self->state_ == State::closing || self->state_ == State::closed) { return; }
                     if (error) {
                         self->connect_timer_.cancel();
                         self->publish_error(
@@ -183,7 +234,9 @@ private:
         apply_common_options();
         state_ = State::connected;
         read_enabled_ = true;
-        publish(Event{
+        started_ = true;
+        accepting_writes_.store(true, std::memory_order_release);
+        if (!publish(Event{
             .type = EventType::open,
             .destination = owner_,
             .socket = id_,
@@ -192,7 +245,7 @@ private:
             .port = endpoint.port(),
             .payload = {},
             .text = endpoint_text(endpoint),
-        });
+        })) { abort_close(); return; }
         begin_read();
     }
 
@@ -209,7 +262,7 @@ private:
 
     void begin_read() {
         if (!read_enabled_ || read_in_flight_ ||
-            state_ != State::connected || !socket_.is_open()) {
+            state_ != State::connected || read_eof_ || !socket_.is_open()) {
             return;
         }
 
@@ -242,15 +295,21 @@ private:
             if (error == asio::error::operation_aborted) {
                 return;
             }
-            if (error != asio::error::eof) {
+            if (error == asio::error::eof) {
+                // Skynet keeps the write half usable after remote EOF.
+                read_eof_ = true;
+                read_enabled_ = false;
+                publish_close_once();
+            } else {
                 publish_error("read failed: " + error.message());
+                abort_close();
             }
-            finish_close(true);
             return;
         }
 
+        record_read(size);
         buffer->resize(size);
-        publish(Event{
+        if (!publish(Event{
             .type = EventType::data,
             .destination = owner_,
             .socket = id_,
@@ -259,7 +318,7 @@ private:
             .port = 0,
             .payload = std::move(*buffer),
             .text = {},
-        });
+        })) { abort_close(); return; }
 
         if (read_enabled_) {
             begin_read();
@@ -271,17 +330,11 @@ private:
     void enqueue_send(Buffer buffer, SendPriority priority) {
         if (state_ == State::closing || state_ == State::closed ||
             !socket_.is_open() || buffer.empty()) {
+            pending_write_bytes_.fetch_sub(buffer.size());
             return;
         }
 
-        const auto new_size = queued_write_bytes_ + buffer.size();
-        if (new_size > core_.config.write_hard_limit) {
-            publish_error("send queue hard limit exceeded");
-            abort_close();
-            return;
-        }
-
-        queued_write_bytes_ = new_size;
+        queued_write_bytes_ += buffer.size();
         auto& queue = priority == SendPriority::high
             ? high_queue_
             : low_queue_;
@@ -324,13 +377,11 @@ private:
     }
 
     void handle_write(const asio::error_code& error, std::size_t size) {
+        record_write(size);
         write_in_flight_ = false;
         if (active_write_) {
-            const auto accounted = std::min(size, active_write_->size());
-            queued_write_bytes_ -= accounted;
-            if (!error && size < active_write_->size()) {
-                queued_write_bytes_ -= active_write_->size() - size;
-            }
+            queued_write_bytes_ -= active_write_->size();
+            pending_write_bytes_.fetch_sub(active_write_->size());
             active_write_.reset();
         }
 
@@ -368,12 +419,17 @@ private:
                 .payload = {},
                 .text = {},
             });
+            warning_active_ = true;
             next_warning_bytes_ = std::max(
                 next_warning_bytes_ * 2,
                 threshold
             );
-        } else if (queued_write_bytes_ < threshold / 2) {
+        } else if (queued_write_bytes_ == 0) {
             next_warning_bytes_ = threshold;
+            if (std::exchange(warning_active_, false)) {
+                publish(Event{.type = EventType::warning, .destination = owner_,
+                    .socket = id_, .value = 0, .payload = {}, .text = {}});
+            }
         }
     }
 
@@ -382,9 +438,14 @@ private:
             return;
         }
         state_ = State::closing;
+        accepting_writes_.store(false, std::memory_order_release);
         read_enabled_ = false;
         resolver_.cancel();
         connect_timer_.cancel();
+        // Wake socket.close immediately; queued writes still drain afterward.
+        publish_close_once();
+        asio::error_code ignored;
+        socket_.shutdown(Tcp::socket::shutdown_receive, ignored);
         if (!write_in_flight_ && high_queue_.empty() && low_queue_.empty()) {
             finish_close(true);
         }
@@ -395,13 +456,17 @@ private:
             return;
         }
         state_ = State::closing;
+        accepting_writes_.store(false, std::memory_order_release);
         read_enabled_ = false;
         resolver_.cancel();
         connect_timer_.cancel();
+        for (const auto& buffer : high_queue_) { pending_write_bytes_.fetch_sub(buffer.size()); }
+        for (const auto& buffer : low_queue_) { pending_write_bytes_.fetch_sub(buffer.size()); }
         high_queue_.clear();
         low_queue_.clear();
-        active_write_.reset();
-        queued_write_bytes_ = 0;
+        // Cancellation is asynchronous: keep the submitted bytes until completion.
+        if (!write_in_flight_) { active_write_.reset(); }
+        queued_write_bytes_ = active_write_ ? active_write_->size() : 0;
         finish_close(true);
     }
 
@@ -410,6 +475,7 @@ private:
             return;
         }
         state_ = State::closed;
+        accepting_writes_.store(false, std::memory_order_release);
         asio::error_code ignored;
         socket_.cancel(ignored);
         socket_.shutdown(Tcp::socket::shutdown_both, ignored);
@@ -424,6 +490,11 @@ private:
     asio::steady_timer connect_timer_;
     Tcp::socket socket_;
     State state_{State::resolving};
+    std::atomic<bool> accepting_writes_{false};
+    std::atomic<std::size_t> pending_write_bytes_{0};
+    bool warning_active_{false};
+    bool read_eof_{false};
+    bool started_{false};
     bool read_enabled_{false};
     bool read_in_flight_{false};
     bool write_in_flight_{false};

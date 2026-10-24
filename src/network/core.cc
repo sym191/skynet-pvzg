@@ -1,7 +1,16 @@
 #include "detail.hpp"
 
+#include <chrono>
 #include <limits>
 #include <utility>
+
+namespace skynet::network {
+std::uint64_t EventSink::now_ticks() const noexcept {
+    static const auto start = std::chrono::steady_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count() / 10;
+}
+}  // namespace skynet::network
 
 namespace skynet::network::detail {
 
@@ -132,12 +141,35 @@ ServiceId SocketBase::owner_snapshot() const noexcept {
     return owner_snapshot_.load(std::memory_order_acquire);
 }
 
-void SocketBase::request_udp_connect(Endpoint) {
-    publish_error("operation requires a UDP socket");
+std::expected<void, Error> SocketBase::request_udp_connect(Endpoint) {
+    return std::unexpected(Error{ErrorCode::wrong_socket_kind, "operation requires a UDP socket"});
 }
 
-void SocketBase::request_udp_send(Buffer, Endpoint) {
-    publish_error("operation requires a UDP socket");
+std::expected<void, Error> SocketBase::request_udp_send(Buffer, Endpoint) {
+    return std::unexpected(Error{ErrorCode::wrong_socket_kind, "operation requires a UDP socket"});
+}
+
+std::future<SocketInfo> SocketBase::request_info() {
+    auto promise = std::make_shared<std::promise<SocketInfo>>();
+    auto result = promise->get_future();
+    asio::post(strand_, [self = shared_from_this(), promise] {
+        promise->set_value(self->socket_info());
+    });
+    return result;
+}
+
+SocketInfo SocketBase::statistics(SocketType type) const {
+    return {.id = id_, .type = type, .owner = owner_, .read = bytes_read_,
+        .written = bytes_written_, .read_time = read_time_, .write_time = write_time_};
+}
+
+void SocketBase::record_read(std::size_t size) {
+    bytes_read_ += size;
+    read_time_ = core_.sink.now_ticks();
+}
+void SocketBase::record_write(std::size_t size) {
+    bytes_written_ += size;
+    write_time_ = core_.sink.now_ticks();
 }
 
 void SocketBase::change_owner(ServiceId owner) noexcept {
@@ -181,25 +213,6 @@ void SocketBase::publish_error(std::string message) noexcept {
 
 void SocketBase::unregister() noexcept {
     core_.directory.erase(id_);
-}
-
-std::expected<void, Error> validate_owner(
-    const std::shared_ptr<SocketBase>& socket,
-    ServiceId owner
-) {
-    if (!socket) {
-        return std::unexpected(Error{
-            ErrorCode::invalid_socket,
-            "socket id is not active",
-        });
-    }
-    if (socket->owner_snapshot() != owner) {
-        return std::unexpected(Error{
-            ErrorCode::wrong_owner,
-            "socket is owned by another service",
-        });
-    }
-    return {};
 }
 
 std::expected<void, Error> validate_kind(
