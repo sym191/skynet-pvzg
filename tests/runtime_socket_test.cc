@@ -2,6 +2,8 @@
 #include "Runtime.hpp"
 #include "SocketEvent.hpp"
 
+#include <arpa/inet.h>
+
 #include <asio.hpp>
 #include <algorithm>
 #include <atomic>
@@ -105,6 +107,20 @@ void wait_eof(asio::ip::tcp::socket& client) {
 
 int main() {
     try {
+        // Empty and maximum-size UDP messages both carry a seven-byte source
+        // trailer outside ud. Unconsumed nested storage stays owned by RAII.
+        for (auto size : {std::size_t{0}, std::size_t{65507}}) {
+            auto buffer = rt::make_socket_message(net::Event{
+                .type = net::EventType::udp, .socket = 12, .port = 54321,
+                .payload = net::Buffer(size, std::byte{42}), .text = "127.0.0.2"});
+            auto* message = reinterpret_cast<const skynet_socket_message*>(buffer.data());
+            check(message->type == SKYNET_SOCKET_TYPE_UDP && message->id == 12 &&
+                message->ud == size && message->buffer, "UDP message ABI");
+            const auto* source = reinterpret_cast<const unsigned char*>(message->buffer + size);
+            check(source[0] == 1 && source[1] == (54321 >> 8) && source[2] == (54321 & 255) &&
+                source[3] == 127 && source[4] == 0 && source[5] == 0 && source[6] == 2, "UDP source blob ABI");
+            if (size) { check(message->buffer[size - 1] == 42, "UDP payload overwritten by source"); }
+        }
         rt::Runtime runtime({.worker_count = 2, .harbor_id = 0});
         auto first = std::make_shared<State>();
         auto second = std::make_shared<State>();
@@ -155,6 +171,10 @@ int main() {
             .type = net::EventType::data, .destination = *receiver, .socket = accepted,
             .payload = net::copy_buffer("rejected"), .text = {}})};
         check(!runtime.send(*receiver, std::move(rejected)), "dead actor accepted event");
+        auto rejected_udp = rt::Message{.type = 6, .data = rt::make_socket_message(net::Event{
+            .type = net::EventType::udp, .destination = *receiver, .socket = 99,
+            .port = 1234, .payload = net::copy_buffer("udp rejection"), .text = "127.0.0.2"})};
+        check(!runtime.send(*receiver, std::move(rejected_udp)), "dead actor accepted UDP event");
         runtime.join();
         return 0;
     } catch (const std::exception& error) {

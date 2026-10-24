@@ -1,5 +1,8 @@
 # 阶段四：Asio TCP 与 socketdriver
 
+> 本文保留阶段四交付时的范围与结果。后续 IPv4 UDP、FD、socket info 和 C gate
+> 已由 [阶段五](stage5-network.md) 补齐；阶段四的占位接口错误不再代表当前行为。
+
 重构进程由 Actor Runtime 拥有 Asio 网络组件。网络线程只把事件转换为
 `PTYPE_SOCKET=6` 消息；Lua/native callback 在 Actor worker 上执行。
 启动失败回收网络、timer、scheduler；停机先取消 I/O，并在销毁服务前 join 网络线程。

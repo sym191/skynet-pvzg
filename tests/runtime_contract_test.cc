@@ -15,6 +15,7 @@
 
 extern "C" {
 #include "skynet.h"
+#include "skynet_socket.h"
 }
 
 namespace {
@@ -38,6 +39,18 @@ public:
         check(context.new_session() == 1, "rejected named send allocated a session");
         auto* native = reinterpret_cast<skynet_context*>(&context);
         check(skynet_current_handle() == context.handle(), "init TLS handle is missing");
+        // Facade rejection must consume MEMORY even before validating its target.
+        const char udp_address[7] = {1, 4, static_cast<char>(210), 127, 0, 0, 2};
+        socket_sendbuffer rejected{0x7fffffff, SOCKET_BUFFER_MEMORY, std::malloc(8), 8};
+        check(rejected.buffer && skynet_socket_udp_sendbuffer(native, udp_address, &rejected) == -1,
+            "UDP facade rejection ownership");
+        rejected = {0x7fffffff, SOCKET_BUFFER_MEMORY, std::malloc(8), 8};
+        check(rejected.buffer && skynet_socket_udp_sendbuffer(native, nullptr, &rejected) == -1,
+            "UDP invalid-address rejection ownership");
+        int address_size = -1;
+        skynet_socket_message not_udp{SKYNET_SOCKET_TYPE_DATA, 1, 0, nullptr};
+        check(!skynet_socket_udp_address(&not_udp, &address_size) && address_size == 0,
+            "UDP address accepted non-UDP message");
         check(skynet_sendname(native, 0, ".absent", PTYPE_TAG_ALLOCSESSION, 0, nullptr, 0) == -1,
               "C sendname did not reject missing destination");
         check(context.new_session() == 2, "C sendname failure consumed a session");

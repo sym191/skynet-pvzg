@@ -2,6 +2,9 @@
 
 #include "detail.hpp"
 
+#include <pthread.h>
+#include <signal.h>
+
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
@@ -36,6 +39,9 @@ std::expected<void, Error> validate_config(const Config& config) {
             ErrorCode::invalid_argument,
             "network max_sockets must be greater than zero"
         ));
+    }
+    if (config.udp_buffer_size < 65507) {
+        return std::unexpected(make_error(ErrorCode::invalid_argument, "udp_buffer_size must hold a full IPv4 datagram"));
     }
     if (config.read_buffer_size == 0) {
         return std::unexpected(make_error(
@@ -77,13 +83,6 @@ std::expected<std::shared_ptr<detail::SocketBase>, Error> acquire_socket(
         ));
     }
     return value;
-}
-
-std::expected<void, Error> udp_not_implemented() {
-    return std::unexpected(make_error(
-        ErrorCode::invalid_argument,
-        "UDP support is scheduled for stage 5"
-    ));
 }
 
 }  // namespace
@@ -169,6 +168,13 @@ std::expected<void, Error> Runtime::start() {
         impl_->workers.reserve(impl_->config.thread_count);
         for (std::size_t i = 0; i < impl_->config.thread_count; ++i) {
             impl_->workers.emplace_back([this] {
+                // POSIX descriptors use write(2), unlike TCP's MSG_NOSIGNAL.
+                // Keep a broken borrowed pipe/socket from terminating embedders;
+                // the write completion reports EPIPE on this dedicated worker.
+                sigset_t signals;
+                sigemptyset(&signals);
+                sigaddset(&signals, SIGPIPE);
+                pthread_sigmask(SIG_BLOCK, &signals, nullptr);
                 // Network handlers and EventSink::publish are expected not to
                 // throw across this thread boundary.
                 impl_->io_context.run();
@@ -397,28 +403,88 @@ std::expected<SocketId, Error> Runtime::connect(
 }
 
 std::expected<SocketId, Error> Runtime::udp_bind(
-    ServiceId,
-    std::string,
-    std::uint16_t
-) {
-    return std::unexpected(udp_not_implemented().error());
+    ServiceId owner, std::string host, std::uint16_t port) {
+    // Match upstream's synchronous resolver result without blocking lifecycle
+    // operations (stop/retire/info) behind a potentially slow DNS query.
+    if (!host.empty() && host != "*") {
+        auto endpoint = detail::resolve_udp({std::move(host), port ? port : std::uint16_t{1}});
+        if (!endpoint) { return std::unexpected(endpoint.error()); }
+        host = std::move(endpoint->host);
+    }
+    std::scoped_lock lock(impl_->lifecycle_mutex);
+    if (auto ready = impl_->require_running(); !ready) { return std::unexpected(ready.error()); }
+    if (!owner || !impl_->core.sink.owner_alive(owner)) {
+        return std::unexpected(make_error(ErrorCode::wrong_owner, "UDP owner is not alive"));
+    }
+    auto id = impl_->core.directory.reserve();
+    if (!id) { return std::unexpected(id.error()); }
+    try {
+        auto socket = detail::make_udp_socket(impl_->core, *id, owner, std::move(host), port);
+        if (!socket) {
+            impl_->core.directory.erase(*id);
+            return std::unexpected(socket.error());
+        }
+        impl_->core.directory.install(*id, *socket);
+        detail::begin_udp(*socket);
+    } catch (...) { impl_->core.directory.erase(*id); throw; }
+    return *id;
 }
 
 std::expected<void, Error> Runtime::udp_connect(
-    ServiceId,
-    SocketId,
-    Endpoint
-) {
-    return udp_not_implemented();
+    ServiceId, SocketId socket, Endpoint endpoint) {
+    auto target = detail::resolve_udp(std::move(endpoint));
+    if (!target) { return std::unexpected(target.error()); }
+    std::scoped_lock lock(impl_->lifecycle_mutex);
+    if (auto ready = impl_->require_running(); !ready) { return ready; }
+    auto value = acquire_socket(impl_->core, socket);
+    if (!value) { return std::unexpected(value.error()); }
+    return (*value)->request_udp_connect(std::move(*target));
 }
 
 std::expected<void, Error> Runtime::udp_send(
-    ServiceId,
-    SocketId,
-    Buffer,
-    Endpoint
-) {
-    return udp_not_implemented();
+    ServiceId, SocketId socket, Buffer buffer, Endpoint endpoint) {
+    std::scoped_lock lock(impl_->lifecycle_mutex);
+    if (auto ready = impl_->require_running(); !ready) { return ready; }
+    auto value = acquire_socket(impl_->core, socket);
+    if (!value) { return std::unexpected(value.error()); }
+    return (*value)->request_udp_send(std::move(buffer), std::move(endpoint));
+}
+
+std::expected<SocketId, Error> Runtime::bind_fd(ServiceId owner, int fd) {
+    std::scoped_lock lock(impl_->lifecycle_mutex);
+    if (auto ready = impl_->require_running(); !ready) { return std::unexpected(ready.error()); }
+    if (!owner || !impl_->core.sink.owner_alive(owner) || fd < 0) {
+        return std::unexpected(make_error(ErrorCode::invalid_argument, "invalid FD or owner"));
+    }
+    auto id = impl_->core.directory.reserve();
+    if (!id) { return std::unexpected(id.error()); }
+    try {
+        auto socket = detail::make_fd_stream(impl_->core, *id, owner, fd);
+        if (!socket) {
+            impl_->core.directory.erase(*id);
+            return std::unexpected(socket.error());
+        }
+        impl_->core.directory.install(*id, *socket);
+        detail::begin_fd(*socket);
+    } catch (...) { impl_->core.directory.erase(*id); throw; }
+    return *id;
+}
+
+std::vector<SocketInfo> Runtime::info() {
+    std::vector<std::future<SocketInfo>> pending;
+    {
+        std::scoped_lock lock(impl_->lifecycle_mutex);
+        if (!impl_->require_running()) { return {}; }
+        for (const auto& socket : impl_->core.directory.snapshot()) {
+            pending.push_back(socket->request_info());
+        }
+    }
+    std::vector<SocketInfo> result;
+    for (auto& future : pending) {
+        auto info = future.get();
+        if (info.type != SocketType::unknown) { result.push_back(std::move(info)); }
+    }
+    return result;
 }
 
 std::expected<void, Error> Runtime::start_socket(
@@ -480,13 +546,6 @@ std::expected<void, Error> Runtime::send(
     if (!value) {
         return std::unexpected(value.error());
     }
-    if (auto kind = detail::validate_kind(
-            *value,
-            detail::SocketKind::tcp_connection
-        ); !kind) {
-        return kind;
-    }
-
     return (*value)->request_send(std::move(buffer), priority);
 }
 
@@ -560,11 +619,9 @@ std::expected<void, Error> Runtime::set_nodelay(
     if (!value) {
         return std::unexpected(value.error());
     }
-    if (auto kind = detail::validate_kind(
-            *value,
-            detail::SocketKind::tcp_connection
-        ); !kind) {
-        return kind;
+    if ((*value)->kind() != detail::SocketKind::tcp_connection &&
+        (*value)->kind() != detail::SocketKind::fd) {
+        return std::unexpected(make_error(ErrorCode::wrong_socket_kind, "nodelay requires a stream socket"));
     }
 
     (*value)->request_nodelay(enabled);

@@ -142,6 +142,19 @@ public:
     }
 
 private:
+    SocketInfo socket_info() override {
+        auto type = SocketType::unknown;
+        if (started_ && (state_ == State::connected || state_ == State::paused)) { type = SocketType::tcp; }
+        if (state_ == State::closing || (read_eof_ && state_ != State::closed)) { type = SocketType::closing; }
+        auto result = statistics(type);
+        result.queued_bytes = pending_write_bytes_.load();
+        result.reading = read_enabled_;
+        result.writing = write_in_flight_;
+        asio::error_code error;
+        auto remote = socket_.remote_endpoint(error);
+        if (!error) { result.name = endpoint_text(remote); }
+        return result;
+    }
     enum class State : std::uint8_t {
         resolving,
         connecting,
@@ -294,6 +307,7 @@ private:
             return;
         }
 
+        record_read(size);
         buffer->resize(size);
         if (!publish(Event{
             .type = EventType::data,
@@ -362,7 +376,8 @@ private:
         );
     }
 
-    void handle_write(const asio::error_code& error, std::size_t) {
+    void handle_write(const asio::error_code& error, std::size_t size) {
+        record_write(size);
         write_in_flight_ = false;
         if (active_write_) {
             queued_write_bytes_ -= active_write_->size();

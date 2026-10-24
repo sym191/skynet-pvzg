@@ -23,6 +23,7 @@ enum class SocketKind : std::uint8_t {
     tcp_connection,
     tcp_listener,
     udp,
+    fd,
 };
 
 class SocketBase;
@@ -74,10 +75,15 @@ public:
     virtual std::expected<void, Error> request_send(Buffer buffer, SendPriority priority) = 0;
     virtual void request_close(bool abort, ServiceId expected_owner = 0) = 0;
     virtual void request_nodelay(bool enabled) = 0;
-    virtual void request_udp_connect(Endpoint endpoint);
-    virtual void request_udp_send(Buffer buffer, Endpoint endpoint);
+    virtual std::expected<void, Error> request_udp_connect(Endpoint endpoint);
+    virtual std::expected<void, Error> request_udp_send(Buffer buffer, Endpoint endpoint);
+    std::future<SocketInfo> request_info();
 
 protected:
+    virtual SocketInfo socket_info() = 0; // Called exclusively on strand_.
+    SocketInfo statistics(SocketType type) const;
+    void record_read(std::size_t size);
+    void record_write(std::size_t size);
     void change_owner(ServiceId owner) noexcept;
     bool publish(Event&& event) noexcept;
     void publish_close_once() noexcept;
@@ -90,6 +96,7 @@ protected:
     std::atomic<ServiceId> owner_snapshot_;
     Strand strand_;
     bool close_sent_{false};
+    std::uint64_t bytes_read_{}, bytes_written_{}, read_time_{}, write_time_{};
 };
 
 [[nodiscard]] std::expected<void, Error> validate_kind(
@@ -129,16 +136,13 @@ void begin_connect(
     int backlog
 );
 
-[[nodiscard]] std::shared_ptr<SocketBase> make_udp_socket(
-    Core& core,
-    SocketId id,
-    ServiceId owner
-);
-
-void open_udp_socket(
-    const std::shared_ptr<SocketBase>& socket,
-    std::string host,
-    std::uint16_t port
-);
+// Construct/open before publication in the directory. No handlers run yet.
+[[nodiscard]] std::expected<std::shared_ptr<SocketBase>, Error> make_udp_socket(
+    Core& core, SocketId id, ServiceId owner, std::string host, std::uint16_t port);
+void begin_udp(const std::shared_ptr<SocketBase>& socket);
+[[nodiscard]] std::expected<Endpoint, Error> resolve_udp(Endpoint endpoint);
+[[nodiscard]] std::expected<std::shared_ptr<SocketBase>, Error> make_fd_stream(
+    Core& core, SocketId id, ServiceId owner, int fd);
+void begin_fd(const std::shared_ptr<SocketBase>& socket);
 
 }  // namespace skynet::network::detail

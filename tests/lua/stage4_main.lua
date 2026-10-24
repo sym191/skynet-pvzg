@@ -24,11 +24,6 @@ skynet.start(function()
     end)
     local ok, err = xpcall(function()
         buffer_contract()
-        if skynet.getenv("stage4_variant") == "refactor" then
-            assert(not pcall(driver.bind, 0))
-            assert(not pcall(driver.info))
-            assert(not pcall(driver.udp, "127.0.0.1", 0))
-        end
         local worker = skynet.newservice("stage4_worker")
         local writer = skynet.newservice("stage4_worker")
         local function echo(host)

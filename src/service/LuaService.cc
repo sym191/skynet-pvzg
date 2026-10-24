@@ -18,15 +18,31 @@ int luaopen_skynet_netpack(lua_State*);
 namespace skynet::service {
 void install_lua_support(lua_State* state);
 namespace {
-int unsupported_socket_api(lua_State* state) {
-    return luaL_error(state, "UDP, FD binding and socket info require stage 5");
+// Validate address blob lengths before the upstream C functions dereference
+// their pointer-only ABI, and reject a failed bind before socket.lua suspends.
+int checked_socket_call(lua_State* state) {
+    const int kind = static_cast<int>(lua_tointeger(state, lua_upvalueindex(2)));
+    if (kind != 0) {
+        std::size_t size;
+        const char* address = luaL_checklstring(state, kind == 1 ? 2 : 1, &size);
+        if (size != 7 || static_cast<unsigned char>(address[0]) != 1) {
+            return luaL_error(state, "Invalid IPv4 UDP address");
+        }
+    }
+    const int arguments = lua_gettop(state);
+    lua_pushvalue(state, lua_upvalueindex(1));
+    lua_insert(state, 1);
+    lua_call(state, arguments, LUA_MULTRET);
+    if (kind == 0 && lua_tointeger(state, 1) < 0) { return luaL_error(state, "socket bind failed"); }
+    return lua_gettop(state);
 }
 int open_socket_driver(lua_State* state) {
     luaopen_skynet_socketdriver(state);
-    // Some upstream functions (notably bind) assume success and would wait
-    // forever on a negative id. Expose a diagnostic until stage 5 implements them.
-    for (const char* name : {"bind", "info", "udp", "udp_connect", "udp_dial", "udp_listen", "udp_send"}) {
-        lua_pushcfunction(state, unsupported_socket_api);
+    int kind = 0;
+    for (const char* name : {"bind", "udp_send", "udp_address"}) {
+        lua_getfield(state, -1, name);
+        lua_pushinteger(state, kind++);
+        lua_pushcclosure(state, checked_socket_call, 2);
         lua_setfield(state, -2, name);
     }
     return 1;

@@ -36,6 +36,7 @@ public:
             }
             self->change_owner(new_owner);
             self->accept_enabled_ = true;
+            self->started_ = true;
             if (self->acceptor_.is_open() && !self->acknowledge_start()) { return; }
             self->begin_accept();
         });
@@ -63,7 +64,17 @@ public:
     void request_nodelay(bool) override {
     }
 
+    SocketKind kind() const noexcept override { return SocketKind::tcp_listener; }
+
 private:
+    SocketInfo socket_info() override {
+        auto result = statistics(closed_ || !started_ ? SocketType::unknown : SocketType::listen);
+        asio::error_code error;
+        auto local = acceptor_.local_endpoint(error);
+        if (!error) { result.name = endpoint_text(local); }
+        result.reading = accept_enabled_;
+        return result;
+    }
     void do_open(std::string host, std::uint16_t port, int backlog) {
         if (closed_) {
             return;
@@ -184,6 +195,7 @@ private:
             return;
         }
 
+        record_read(1);
         auto reserved = core_.directory.reserve();
         if (!reserved) {
             asio::error_code ignored;
@@ -252,6 +264,7 @@ private:
     Tcp::resolver resolver_;
     Tcp::acceptor acceptor_;
     int backlog_{128};
+    bool started_{false};
     bool accept_enabled_{false};
     bool accept_in_flight_{false};
     bool closed_{false};

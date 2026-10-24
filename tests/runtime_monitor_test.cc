@@ -20,7 +20,7 @@ struct RuntimeTestAccess {
     }
     static bool idle(const Runtime& runtime) {
         for (std::size_t index = 0; index < runtime.options_.worker_count; ++index) {
-            if (runtime.monitors_[index].destination != 0) {
+            if (static_cast<Handle>(runtime.monitors_[index].addresses.load(std::memory_order_acquire)) != 0) {
                 return false;
             }
         }

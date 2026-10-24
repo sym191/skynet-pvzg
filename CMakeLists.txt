@@ -86,6 +86,7 @@ set_target_properties(skynet_refactor PROPERTIES
 )
 
 enable_testing()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_library(skpvzg_native_probe MODULE tests/native_probe.c)
 target_include_directories(skpvzg_native_probe PRIVATE "${PROJECT_SOURCE_DIR}/third_party/skynet/skynet-src")
@@ -95,7 +96,7 @@ add_library(skpvzg_native_logger MODULE tests/native_logger.c)
 target_include_directories(skpvzg_native_logger PRIVATE "${PROJECT_SOURCE_DIR}/third_party/skynet/skynet-src")
 set_target_properties(skpvzg_native_logger PROPERTIES PREFIX "" OUTPUT_NAME nativelogger
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test-cservice")
-add_dependencies(skynet_refactor skpvzg_native_probe skpvzg_native_logger)
+add_dependencies(skynet_refactor skpvzg_native_probe skpvzg_native_logger skynet_gate)
 
 foreach(STAGE3_VARIANT IN ITEMS original refactor)
     set(STAGE3_CSERVICE "${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/cservice")
@@ -104,6 +105,13 @@ foreach(STAGE3_VARIANT IN ITEMS original refactor)
         "${SKPVZG_GENERATED_CONFIG_DIR}/stage3-${STAGE3_VARIANT}.lua" @ONLY)
     configure_file(tests/cmake/stage4_config.lua.in
         "${SKPVZG_GENERATED_CONFIG_DIR}/stage4-${STAGE3_VARIANT}.lua" @ONLY)
+    configure_file(tests/cmake/stage5_config.lua.in
+        "${SKPVZG_GENERATED_CONFIG_DIR}/stage5-${STAGE3_VARIANT}.lua" @ONLY)
+    add_test(NAME "lua.stage5.${STAGE3_VARIANT}" COMMAND "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tests/run_stage5.py"
+        "${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/bin/skynet"
+        "${SKPVZG_GENERATED_CONFIG_DIR}/stage5-${STAGE3_VARIANT}.lua")
+    set_tests_properties("lua.stage5.${STAGE3_VARIANT}" PROPERTIES TIMEOUT 65)
     add_test(NAME "lua.stage4.${STAGE3_VARIANT}" COMMAND "${CMAKE_COMMAND}"
         "-DSKYNET=${CMAKE_BINARY_DIR}/${STAGE3_VARIANT}/bin/skynet"
         "-DCONFIG=${SKPVZG_GENERATED_CONFIG_DIR}/stage4-${STAGE3_VARIANT}.lua"
@@ -170,6 +178,10 @@ add_test(NAME runtime.contract COMMAND skpvzg_runtime_contract_test)
 add_executable(skpvzg_network_runtime_test tests/network_runtime_test.cc)
 target_link_libraries(skpvzg_network_runtime_test PRIVATE skynet::network)
 add_test(NAME network.runtime COMMAND skpvzg_network_runtime_test)
+add_executable(skpvzg_network_stage5_test tests/network_stage5_test.cc)
+target_link_libraries(skpvzg_network_stage5_test PRIVATE skynet::network)
+add_test(NAME network.stage5 COMMAND skpvzg_network_stage5_test)
+set_tests_properties(network.stage5 PROPERTIES TIMEOUT 30)
 add_executable(skpvzg_runtime_socket_test tests/runtime_socket_test.cc)
 target_include_directories(skpvzg_runtime_socket_test PRIVATE "${PROJECT_SOURCE_DIR}/third_party/skynet/skynet-src")
 target_link_libraries(skpvzg_runtime_socket_test PRIVATE skynet::runtime)
@@ -205,6 +217,7 @@ add_custom_target(skpvzg_tests DEPENDS
     skpvzg_runtime_monitor_test
     skpvzg_runtime_contract_test
     skpvzg_network_runtime_test
+    skpvzg_network_stage5_test
     skpvzg_runtime_socket_test
 )
 add_custom_target(skynet_all DEPENDS skynet_refactor skynet_original skynet_network skpvzg_tests)

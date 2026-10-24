@@ -1,5 +1,7 @@
 #include "SocketEvent.hpp"
 
+#include <arpa/inet.h>
+
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -60,7 +62,10 @@ OwnedBuffer make_socket_message(network::Event&& event) {
         value = static_cast<int>(event.value);
         break;
     case network::EventType::udp:
-        throw std::invalid_argument("UDP bridge is not implemented");
+        type = SKYNET_SOCKET_TYPE_UDP;
+        if (event.payload.size() > 65507) { throw std::length_error("invalid IPv4 datagram size"); }
+        value = static_cast<int>(event.payload.size());
+        break;
     }
     const auto text_size = padding ? std::min(event.text.size(), std::size_t{128}) : 0;
     const auto size = sizeof(skynet_socket_message) + text_size;
@@ -70,10 +75,22 @@ OwnedBuffer make_socket_message(network::Event&& event) {
     auto result = OwnedBuffer::adopt(message, size, drop_socket_message);
     if (padding) {
         std::memcpy(message + 1, event.text.data(), text_size);
-    } else if (!event.payload.empty()) {
-        message->buffer = static_cast<char*>(std::malloc(event.payload.size()));
+    } else if (!event.payload.empty() || type == SKYNET_SOCKET_TYPE_UDP) {
+        const auto address_size = type == SKYNET_SOCKET_TYPE_UDP ? 7 : 0;
+        message->buffer = static_cast<char*>(std::malloc(event.payload.size() + address_size));
         if (!message->buffer) { throw std::bad_alloc(); }
-        std::memcpy(message->buffer, event.payload.data(), event.payload.size());
+        if (!event.payload.empty()) {
+            std::memcpy(message->buffer, event.payload.data(), event.payload.size());
+        }
+        if (address_size) {
+            auto* address = message->buffer + value;
+            address[0] = 1; // Upstream PROTOCOL_UDP, network-order port + IPv4.
+            const auto port = htons(event.port);
+            std::memcpy(address + 1, &port, sizeof(port));
+            if (inet_pton(AF_INET, event.text.c_str(), address + 3) != 1) {
+                throw std::invalid_argument("invalid UDP source address");
+            }
+        }
     }
     return result;
 }

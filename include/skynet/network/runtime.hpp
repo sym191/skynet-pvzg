@@ -43,6 +43,8 @@ public:
     // Checked on socket strands before ownership transfers. Standalone sinks
     // may accept arbitrary service ids; actor sinks reject retired services.
     virtual bool owner_alive(ServiceId) const noexcept { return true; }
+    // Actor sinks supply skynet.now()'s clock for socket statistics.
+    virtual std::uint64_t now_ticks() const noexcept;
 };
 
 enum class ErrorCode : std::uint8_t {
@@ -80,6 +82,18 @@ struct Config {
     std::uint32_t connect_timeout_ms{10'000};
     bool reuse_address{true};
     bool keep_alive{true};
+};
+
+enum class SocketType : std::uint8_t { unknown, listen, tcp, udp, bound, closing };
+
+struct SocketInfo {
+    SocketId id{};
+    SocketType type{};
+    ServiceId owner{};
+    std::uint64_t read{}, written{}, read_time{}, write_time{};
+    std::size_t queued_bytes{};
+    bool reading{}, writing{};
+    std::string name;
 };
 
 class Runtime final {
@@ -174,6 +188,11 @@ public:
         bool enabled = true
     );
 
+    // Duplicates fd; the caller retains ownership and must not consume data
+    // concurrently. O_NONBLOCK is shared with the original open description.
+    [[nodiscard]] std::expected<SocketId, Error> bind_fd(ServiceId owner, int fd);
+    // Owner/actor threads only, like listen(); never from an EventSink callback.
+    [[nodiscard]] std::vector<SocketInfo> info();
     void close_all(ServiceId owner) noexcept;
 
 private:

@@ -3,6 +3,8 @@ add_library(skynet_network STATIC
     core.cc
     tcp_connection.cc
     tcp_listener.cc
+    udp_socket.cc
+    fd_stream.cc
 )
 add_library(skynet::network ALIAS skynet_network)
 

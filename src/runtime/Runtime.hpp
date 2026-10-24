@@ -37,10 +37,9 @@ struct RuntimeOptions {
 };
 
 struct Monitor {
-    alignas(std::hardware_destructive_interference_size) std::atomic<int> version{0};
-    std::uint32_t check_version{0};
-    Handle source{0};
-    Handle destination{0};
+    alignas(std::hardware_destructive_interference_size) std::atomic<std::uint64_t> version{0};
+    std::uint64_t check_version{0}; // Only the monitor thread reads/writes this.
+    std::atomic<std::uint64_t> addresses{0}; // source in high bits, destination in low bits.
 };
 
 class Runtime final : private network::EventSink {
@@ -96,7 +95,7 @@ public:
     );
 
     void schedule_timeout(std::uint32_t ticks, Handle destination, int session);
-    [[nodiscard]] std::uint64_t now_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t now_ticks() const noexcept override;
     [[nodiscard]] std::uint32_t start_time() const noexcept;
     [[nodiscard]] bool profile_enabled() const noexcept;
     [[nodiscard]] std::size_t service_count() const;

@@ -641,21 +641,25 @@ void Runtime::log(Handle source, std::string_view message) {
 
 void Runtime::trigger(std::size_t worker_index, Handle source, Handle destination) noexcept {
     auto& monitor = monitors_[worker_index];
-    monitor.source = source;
-    monitor.destination = destination;
-    monitor.version.fetch_add(1, std::memory_order_relaxed);
+    // Each slot has one writer. Odd versions denote an update; publishing the
+    // address pair together prevents mixing source/destination from dispatches.
+    monitor.version.fetch_add(1, std::memory_order_acq_rel);
+    monitor.addresses.store((std::uint64_t{source} << 32) | destination, std::memory_order_release);
+    monitor.version.fetch_add(1, std::memory_order_release);
 }
 
 void Runtime::check(std::size_t worker_index) {
     auto& monitor = monitors_[worker_index];
-    const auto version = static_cast<std::uint32_t>(
-        monitor.version.load(std::memory_order_relaxed));
+    const auto version = monitor.version.load(std::memory_order_acquire);
+    if (version & 1) { return; }
     if (version != monitor.check_version) {
         monitor.check_version = version;
         return;
     }
-    const auto source = monitor.source;
-    const auto destination = monitor.destination;
+    const auto addresses = monitor.addresses.load(std::memory_order_acquire);
+    if (monitor.version.load(std::memory_order_acquire) != version) { return; }
+    const auto source = static_cast<Handle>(addresses >> 32);
+    const auto destination = static_cast<Handle>(addresses);
     if (destination != 0) {
         if (auto context = handles_.grab(destination)) {
             context->mark_endless();
