@@ -1,4 +1,4 @@
-package.path = "service/?.lua;" .. package.path
+package.path = "lua/lualib/?.lua;" .. package.path
 local json = require "common.json"
 local Model = require "team.model"
 local store = require "team.store"

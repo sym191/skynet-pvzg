@@ -10,11 +10,11 @@ export TEAM_STATE_PATH="${TEAM_STATE_PATH:-${team_data_dir}/state.json}"
 if [[ "${1:-}" == "--help" ]]; then
     cat <<'HELP'
 Usage: ./start-server.sh [--build-only]
-Starts original Skynet and the internal .team service.
+Starts original Skynet and the internal .team and .login services.
 First run builds original Skynet if needed. No client listener is started.
 Environment: TEAM_INVITE_TTL, TEAM_DATA_DIR, TEAM_STATE_PATH, TEAM_BUILD_ROOT,
 TEAM_BUILD_JOBS, TEAM_BATTLE_SERVICE, TEAM_POLICY_MODULE.
-All path overrides must be absolute. See service/README.md.
+All path overrides must be absolute. See lua/README.md.
 HELP
     exit 0
 fi
@@ -51,5 +51,5 @@ mkdir -p -- "$(dirname -- "$TEAM_STATE_PATH")"
 # One process must own a durable state file. The lock stays held across exec.
 exec 9>"${TEAM_STATE_PATH}.lock"
 flock -n 9 || { echo "A team server already owns this state file" >&2; exit 1; }
-echo "Starting original Skynet and .team service"
-exec "$TEAM_BUILD_ROOT/bin/skynet" "$TEAM_REPO_ROOT/service/config.lua"
+echo "Starting original Skynet and .team / .login services"
+exec "$TEAM_BUILD_ROOT/bin/skynet" "$TEAM_REPO_ROOT/lua/config/server.lua"

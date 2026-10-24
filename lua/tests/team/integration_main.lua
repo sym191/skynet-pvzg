@@ -14,13 +14,13 @@ local kinds = {
 local function run()
 	local phase = skynet.getenv("team_test_phase")
 	local previous = store.load(skynet.getenv("team_state_path"))
-	local battle = skynet.newservice("tests/battle_provider")
+	local battle = skynet.newservice("team/battle_provider")
 	local team = skynet.newservice("team/service")
 	assert(skynet.call(team, "lua", "init", battle))
 	local agents = {}
 
 	local function connect(id)
-		local agent = skynet.newservice("tests/player_agent")
+		local agent = skynet.newservice("team/player_agent")
 		assert(skynet.call(agent, "lua", "attach", team, id))
 		agents[id] = agent
 		return agent
@@ -65,7 +65,7 @@ local function run()
 	if phase == "rollback" then
 		-- The Python harness creates a directory at the temporary-write path.
 		-- No old players were online, so init has nothing to write.
-		local agent = skynet.newservice("tests/player_agent")
+		local agent = skynet.newservice("team/player_agent")
 		assert(not skynet.call(agent, "lua", "attach", team, "a"))
 		local number, payload = skynet.call(agent, "lua", "request", 7, '{"schema_version":3,"type":"sync_team"}')
 		assert(number == 255 and json.decode(payload).error == "not_authenticated")

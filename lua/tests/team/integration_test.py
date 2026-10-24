@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import time
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def assert_no_listeners(pid):
@@ -34,7 +34,7 @@ def run():
         subprocess.run([str(ROOT / "start-server.sh"), "--build-only"], env=env, check=True,
                        stdout=subprocess.DEVNULL)
         binary = str(ROOT / "build/original/bin/skynet")
-        config = str(ROOT / "service/tests/integration_config.lua")
+        config = str(ROOT / "lua/tests/team/integration_config.lua")
         for phase in ("seed", "recover", "rollback"):
             if phase == "rollback":
                 env["TEAM_STATE_PATH"] = str(temp / "failed-state.json")
@@ -55,7 +55,7 @@ def run():
                                     stdout=log, stderr=subprocess.STDOUT)
             try:
                 deadline = time.monotonic() + 8
-                while "TEAM_SERVICE_READY .team" not in log_path.read_text():
+                while "LOGIN_SERVICE_READY .login" not in log_path.read_text():
                     assert proc.poll() is None, log_path.read_text()
                     assert time.monotonic() < deadline, log_path.read_text()
                     time.sleep(0.02)
@@ -64,7 +64,7 @@ def run():
                 second = subprocess.run([str(ROOT / "start-server.sh")], env=env,
                                         capture_output=True, timeout=5)
                 assert second.returncode != 0 and b"already owns" in second.stderr
-                print("PASS: launcher starts .team without listening sockets or account files; state lock enforced")
+                print("PASS: launcher starts .team and .login without listening sockets or account files; state lock enforced")
             finally:
                 proc.terminate()
                 proc.wait(timeout=5)

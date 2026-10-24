@@ -1,7 +1,7 @@
-# 原版 Skynet 组队服务
+# 原版 Skynet 登录、玩家与组队服务
 
 基于 `pvz-global/team/功能文档.md` 和 `team_protocol.md`（2026-10-13 Team v3）实现。
-业务代码、配置及测试集中于根目录 `service/`；根目录 `start-server.sh` 为启动入口。
+业务代码、配置及测试集中于 `lua/`；根目录 `start-server.sh` 为启动入口。
 只运行 `third_party/skynet` 原版服务，不依赖 C++ 重构版、CMake 或外部数据库。
 
 ## 启动
@@ -10,13 +10,13 @@
 ./start-server.sh
 ```
 
-启动原版 Skynet 并注册内部服务 `.team`，前台运行，Ctrl+C 停止，可从任意目录执行。
+启动原版 Skynet 并注册内部服务 `.team` 和 `.login`，前台运行，Ctrl+C 停止，可从任意目录执行。
 首次运行缺少产物时直接用原版 Makefile 构建；子模块缺失时自动初始化。
 需要 Linux、Bash、make、C 编译器及 util-linux 的 `flock`。
 仅构建：`./start-server.sh --build-only`；帮助：`./start-server.sh --help`。
 
-启动器不监听客户端端口，也不生成账户或提供登录协议。客户端接入、认证和 TCP 包头
-由后续统一网络层负责；组队提供服务器内部接口。
+登录服务直接接受玩家 ID，不验证账号密码，也不创建账号文件。客户端接入和 TCP 包头
+由后续统一网络层负责；当前登录、玩家和组队均提供服务器内部 Lua RPC，不监听客户端端口。
 
 | 环境变量 | 默认值 / 用途 |
 | --- | --- |
@@ -38,31 +38,80 @@ TEAM_INVITE_TTL=120 ./start-server.sh
 ## 目录与服务边界
 
 ```text
-service/
-  main.lua                 启动、注册 .team、失败终止
-  config.lua               原版 Skynet 配置
-  common/json.lua          业务 JSON 编解码
-  team/model.lua           队伍、邀请、状态版本、锁定与战斗入口
-  team/policy.lua          生命周期默认策略
-  team/service.lua         内部调用、玩家服务绑定、事务提交、业务通知
-  team/store.lua           状态加载、同目录临时文件替换
-  tests/                   模型测试与原版 Skynet 服务间集成测试
+lua/
+  config/server.lua        原版 Skynet 配置
+  service/main.lua         启动并注册 .team / .login，失败终止
+  service/login/service.lua  登录、玩家服务注册表、查询与退出
+  service/player/service.lua 玩家数据初始化、组队请求与通知
+  service/team/service.lua 内部调用、玩家服务绑定、事务提交、业务通知
+  lualib/common/json.lua   业务 JSON 编解码
+  lualib/player/model.lua  玩家 ID 校验与初始资料
+  lualib/team/model.lua    队伍、邀请、状态版本、锁定与战斗入口
+  lualib/team/policy.lua   生命周期默认策略
+  lualib/team/store.lua    状态加载、同目录临时文件替换
+  tests/team/             组队模型与真实 Skynet 集成测试
+  tests/login/            登录与玩家服务集成测试
+  examples/               示例预留目录
 ```
 
-调用关系：统一网关 → 已认证的玩家会话服务 → `.team`。
+`luaservice` 只加载服务入口，`lua_path` 加载 `lualib` 模块；测试配置单独追加测试服务路径。
+调用关系：统一网关 → `.login` 创建/查询玩家服务 → 玩家服务 → `.team`。
 组队由单个 Skynet 服务拥有全部状态，模型调用不进行 RPC、不 yield。
 每次修改先写状态文件，再按提交顺序发出事件和响应。
 
-## 玩家会话服务接入
-
-每个玩家会话对应一个 Skynet 服务地址。登录成功后，由该服务使用服务端认证得到的资料
-注册上线；不能把 `online` 暴露为客户端可调用命令，也不能从 Team 包体取得当前玩家身份。
-组队信任服务器内部服务，账号认证的正确性由调用方负责。
+## 免密码登录与玩家服务
 
 ```lua
--- 在已经完成认证的玩家会话服务内调用。
+-- 服务器内部调用；ID 使用 Team 协议的字符串形式。
+local player, err = skynet.call(".login", "lua", "login", "10001")
+assert(player, err)
+local data = skynet.call(player, "lua", "get_data")
+-- data = { player_id = "10001", display_name = "玩家10001", avatar_key = "" }
+assert(skynet.call(".login", "lua", "get", "10001") == player)
+local message, payload = skynet.call(player, "lua", "request", 7,
+    '{"schema_version":3,"type":"sync_team"}')
+-- 网关取走并转发待发送业务通知；payload 保持 JSON 字符串。
+local events = skynet.call(player, "lua", "events")
+-- 连接关闭时传入当时绑定的地址，避免迟到的退出请求关闭新服务。
+assert(skynet.call(".login", "lua", "logout", "10001", player))
+```
+
+| `.login` 内部接口 | 返回值 / 行为 |
+| --- | --- |
+| `login(player_id)` | 成功返回玩家服务地址；失败返回 `nil, error` |
+| `get(player_id)` | 返回已初始化且存活的玩家服务地址；未登录返回 nil |
+| `logout(player_id, expected_address)` | 先报告组队下线，再注销并销毁玩家服务；返回 boolean，失败附 error |
+
+玩家 ID 必须是 1–256 字节、不含控制字符的字符串；数字 ID 请由调用方转为字符串。
+无效 ID 返回 `invalid_player_id`，创建或初始化失败返回 `initialization_failed`。
+每个 ID 只有一个已登记服务；重复、并发登录复用地址，不重置已有玩家数据。
+注册表由 `.login` 持有，通过 `get` 查询，不将玩家 ID 拼接成 Skynet 全局服务名。
+所有注册表操作按序执行，适用于当前单节点部署。
+
+新玩家默认资料由 `player.model` 初始化；玩家服务以自己的地址调用 `.team.online`，
+由组队模型初始化并持久化玩家资料、在线状态、队伍归属和状态版本。
+只有初始化与持久化成功才发布服务地址；失败销毁临时玩家服务，允许重试。
+现有玩家重新登录保留队伍、邀请、版本等组队数据。没有额外引入背包、货币等未定义数据。
+玩家服务地址、待发送通知及注册表只存在内存中；重启后重新登录恢复持久化的组队状态。
+
+玩家服务的 `get_data` 返回基础资料，`request` 转发 Team 消息，`events` 取走并清空通知。
+接入网络层后需及时消费通知；断线后由调用方执行 `logout`。
+玩家服务只接受 `.login` 的初始化/退出操作，以及真实 `.team` 发来的通知/替换消息。
+`logout` 地址不匹配返回 `false, "stale_player_service"`；玩家已经注销时返回 true。
+异常退出的玩家服务在下次登录时重建并接管旧绑定；当前没有后台崩溃监控，异常退出到重新
+登录之间的组队在线状态不会自动清理。重复登录复用服务，网络连接接管策略由网关负责。
+免密码登录有意不进行身份验证，这些 RPC 仅用于可信服务器内部调用。
+
+## 玩家会话服务接入
+
+每个玩家会话对应一个 Skynet 服务地址。上面的玩家服务已自动完成上线绑定。
+若接入其他玩家服务，由它使用服务端确定的资料注册上线；不能把 `online` 暴露为客户端可调用命令，也不能从 Team 包体取得当前玩家身份。
+组队信任服务器内部服务；当前登录模式按传入 ID 直接建立玩家身份。
+
+```lua
+-- 自定义玩家服务可直接调用；默认 player/service 已执行此操作。
 assert(skynet.call(".team", "lua", "online", {
-    player_id = authenticated_player_id,
+    player_id = server_player_id,
     display_name = player_display_name,
     avatar_key = player_avatar_key,
 }))
@@ -79,7 +128,7 @@ skynet.call(".team", "lua", "offline")
 
 | 内部接口 | 结果 / 职责 |
 | --- | --- |
-| `online(profile)` | 返回 boolean；将调用服务地址绑定到认证玩家，更新在线状态 |
+| `online(profile)` | 返回 boolean；将调用服务地址绑定到指定玩家，更新在线状态 |
 | `offline()` | 返回 boolean；解除调用地址绑定、更新离线状态，保留队伍归属 |
 | `request(message_id, payload_json)` | 返回 `response_message_id, response_json`；按调用服务地址取得操作者 |
 | `team_event(message_id, payload_json)` | `.team` 通过 `skynet.send` 发给玩家服务的业务通知 |
@@ -139,7 +188,7 @@ Team v3 六类业务消息及字段继续以共享文档为准：
 TEAM_BATTLE_SERVICE=battle/service ./start-server.sh
 ```
 
-`battle/service` 应实现以下 Skynet Lua 命令（代码同样放在 `service/battle/`）：
+`battle/service` 应实现以下 Skynet Lua 命令（代码同样放在 `lua/service/battle/`）：
 
 | 组队发给适配器的命令 | 参数与职责 |
 | --- | --- |
@@ -172,8 +221,9 @@ skynet.call(team_service, "lua", "set_activity", player_id, "正在参加其他�
 
 ```bash
 ./start-server.sh --build-only
-third_party/skynet/3rd/lua/lua service/tests/model_test.lua
-python3 service/tests/integration_test.py
+third_party/skynet/3rd/lua/lua lua/tests/team/model_test.lua
+python3 lua/tests/team/integration_test.py
+python3 lua/tests/login/integration_test.py
 ```
 
 模型测试覆盖唯一归属、去重、容量、权限、失效/过期邀请、活动限制、锁定、队长继任、
@@ -181,5 +231,8 @@ python3 service/tests/integration_test.py
 集成测试在真实原版 Skynet 中创建模拟玩家服务，直接通过 `skynet.call/send` 验证业务请求、
 通知、身份绑定、并发争抢名额、离线踢人、邀请过期、战斗取消/结束、会话替换、进程重启及
 存储写入失败回滚。另验证默认启动没有监听套接字、不生成账户文件，并保留状态文件互斥。
-测试无需客户端、端口或登录凭据。`tests/battle_provider.lua` 仅用于验证战斗接入流程，
+测试无需客户端、端口或登录凭据。`lua/tests/team/battle_provider.lua` 仅用于验证战斗接入流程，
 默认启动不加载它。
+
+登录集成测试覆盖默认启动注册、ID 校验、并发幂等登录、玩家资料初始化、组队邀请与通知、
+退出重登、旧退出请求隔离、异常服务重建、会话替换、进程重启恢复及落盘失败清理和重试。

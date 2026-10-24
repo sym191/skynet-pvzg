@@ -17,3 +17,6 @@ lua_path = "@SKPVZG_SHARED_LUA_ROOT@/lualib/?.lua;" ..
 lua_cpath = "@SKPVZG_ORIGINAL_LUACLIB_DIR@/?.so"
 snax = "@SKPVZG_SHARED_LUA_ROOT@/examples/?.lua;" .. root .. "examples/?.lua"
 cpath = "@SKPVZG_ORIGINAL_CSERVICE_DIR@/?.so"
+team_state_path = "@SKPVZG_ORIGINAL_OUTPUT_DIR@/team-state.json"
+team_invite_ttl = 60
+team_policy_module = "team.policy"
