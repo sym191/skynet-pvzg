@@ -39,6 +39,7 @@ ctest --preset linux-debug
 - [Network 设计架构](network-architecture.md)
 - [阶段四 TCP 与 socketdriver 交付](stage4-tcp.md)
 - [阶段五 UDP、FD 与 C gate 交付](stage5-network.md)
+- [阶段六至八开发规划](plans/README.md)：多节点通信、扩展与运维、稳定性及发布验收。
 
 ## Lua 业务启动
 
